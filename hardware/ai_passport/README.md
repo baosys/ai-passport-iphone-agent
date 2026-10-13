@@ -7,8 +7,9 @@
 Let an AI model use a real iPhone with a FoloToy AI Passport as its hands. No Mac, no developer account, no
 jailbreak, and nothing installed on the phone.
 
-This branch ports [onehumanbeing/esp32-iphone-agent](https://github.com/onehumanbeing/esp32-iphone-agent) to the
-AI Passport (ESP32-C3). Its agent server runs unchanged; only the board side is new.
+This directory ports [onehumanbeing/esp32-iphone-agent](https://github.com/onehumanbeing/esp32-iphone-agent) to the
+AI Passport (ESP32-C3). It replaces the ESP32-S3 board in [`../hid_bridge`](../hid_bridge); the agent server in
+[`../../server`](../../server) is the same for both boards. Commands below run from this directory.
 
 ## How it works
 
@@ -39,7 +40,7 @@ server's calibration holds.
 
 | Part | Notes |
 |---|---|
-| AI Passport | Flashed with this branch |
+| AI Passport | Flashed with this firmware |
 | iPhone | Any iPhone with AssistiveTouch; no cable or adapter to the board |
 | Computer | macOS or Linux on the same network as the phone; runs UxPlay and the agent server |
 | Vision model | Any OpenAI-compatible chat API that accepts images, as in the reference project |
@@ -59,9 +60,9 @@ Flashing keeps NVS, so an existing Bluetooth pairing and Wi-Fi settings survive 
 
 ### 2. Start the agent server
 
-Follow the reference project's [server setup](https://github.com/onehumanbeing/esp32-iphone-agent#2-install-and-start-the-server):
-install UxPlay, clone the project, write `server/.env` with your model API, and run `python -m hidagent`. Skip its
-"Flash the board" step.
+Follow the [server setup](../../README.md#2-install-and-start-the-server) in the repository README: install UxPlay,
+write `server/.env` with your model API, and run `python -m hidagent`. Skip its "Flash the board" step, which is for
+the ESP32-S3.
 
 ### 3. Pair the iPhone (once)
 

@@ -24,6 +24,10 @@
 Agent 通过 AirPlay 屏幕镜像"看"手机，通过一块插在手机 USB 口上的 ESP32-S3 小板子"摸"手机：板子对手机来说就是一个
 USB 鼠标加键盘。大脑可以是任何兼容 OpenAI 接口的视觉模型，云端 API 或自己部署的模型都行。
 
+> **AI Passport 分支。** 本 fork 新增了一种板子：FoloToy AI Passport（ESP32-C3）以**蓝牙**鼠标 + 键盘的身份与 iPhone
+> 配对，手机上不用插任何东西。它使用相同的板子协议，下面的服务端对两种板子都适用。详见
+> [`hardware/ai_passport/`](hardware/ai_passport/README.zh_CN.md)。
+
 ## 为什么做这个
 
 大多数 iPhone 自动化方案通过 XCTest / WebDriverAgent 控制手机，需要 Mac、Xcode、一个签过名的辅助 App，还要 Apple
@@ -189,6 +193,7 @@ Wi-Fi 断开时，板子会松开所有按键并自动重连。手机锁屏时 U
 
 ```
 hardware/   ESP32-S3 固件（Arduino）和刷写脚本
+            ai_passport/：AI Passport（ESP32-C3）固件，蓝牙 HID，ESP-IDF
 server/     Agent、网页界面、屏幕采集和板子连接（Python，FastAPI）
             serve/：可选的极简服务，用来自己部署 Hugging Face 视觉模型
 ```

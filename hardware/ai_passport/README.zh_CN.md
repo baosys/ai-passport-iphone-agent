@@ -7,8 +7,9 @@
 让 AI 模型以 FoloToy AI Passport 为"双手"操作一部真实的 iPhone。不需要 Mac、不需要开发者账号、不越狱,
 手机上也不用安装任何东西。
 
-本分支把 [onehumanbeing/esp32-iphone-agent](https://github.com/onehumanbeing/esp32-iphone-agent) 移植到
-AI Passport(ESP32-C3)。其 agent 服务器原样使用,只有板端是新的。
+本目录把 [onehumanbeing/esp32-iphone-agent](https://github.com/onehumanbeing/esp32-iphone-agent) 移植到
+AI Passport(ESP32-C3),取代 [`../hid_bridge`](../hid_bridge) 中的 ESP32-S3 板子;[`../../server`](../../server)
+中的 agent 服务器两种板子通用。下文命令均在本目录下执行。
 
 ## 工作原理
 
@@ -38,7 +39,7 @@ ESP32-C3 没有 USB OTG 控制器,无法充当 USB HID 设备;但它支持 BLE,�
 
 | 部件 | 说明 |
 |---|---|
-| AI Passport | 烧录本分支固件 |
+| AI Passport | 烧录本固件 |
 | iPhone | 任何支持辅助触控的 iPhone;与板子之间无需线缆或转接器 |
 | 电脑 | macOS 或 Linux,与手机在同一网络;运行 UxPlay 和 agent 服务器 |
 | 视觉模型 | 任何支持图片输入的 OpenAI 兼容对话 API,与参考项目相同 |
@@ -58,8 +59,8 @@ idf.py build flash
 
 ### 2. 启动 agent 服务器
 
-按参考项目的[服务器安装说明](https://github.com/onehumanbeing/esp32-iphone-agent#2-install-and-start-the-server):
-安装 UxPlay、克隆该项目、在 `server/.env` 写好模型 API,然后运行 `python -m hidagent`。跳过它的"烧录板子"一步。
+按仓库 README 的[服务端安装说明](../../README.zh-CN.md#2-安装并启动服务端):安装 UxPlay、在 `server/.env` 写好模型 API,
+然后运行 `python -m hidagent`。跳过它的"刷固件"一步,那是给 ESP32-S3 用的。
 
 ### 3. 配对 iPhone(仅一次)
 

@@ -25,6 +25,10 @@ The agent sees the phone through AirPlay screen mirroring and touches it through
 plugs into the phone's USB port as a mouse and keyboard. Any OpenAI-compatible vision model can be the brain —
 a cloud API, or a model you run yourself.
 
+> **AI Passport fork.** This fork adds a second board: the FoloToy AI Passport (ESP32-C3) pairs with the iPhone as a
+> **Bluetooth** mouse + keyboard, so nothing is plugged into the phone. It speaks the same board protocol, so the
+> server below works with either board. See [`hardware/ai_passport/`](hardware/ai_passport/README.md).
+
 ## Why
 
 Most iPhone automation drives the phone through XCTest / WebDriverAgent. That needs a Mac, Xcode, a signed
@@ -200,6 +204,7 @@ restarts the board if it ever stops responding.
 
 ```
 hardware/   ESP32-S3 firmware (Arduino) and flash script
+            ai_passport/: AI Passport (ESP32-C3) firmware, Bluetooth HID, ESP-IDF
 server/     agent, web UI, screen capture and board link (Python, FastAPI)
             serve/: optional minimal server to host a Hugging Face vision model yourself
 ```
