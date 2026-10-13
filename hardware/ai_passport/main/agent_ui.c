@@ -148,12 +148,13 @@ static void build_live(void)
     lv_obj_set_style_bg_color(s_paused, lv_color_hex(COL_RED), 0);
     lv_obj_set_style_border_width(s_paused, 0, 0);
     lv_obj_set_style_radius(s_paused, 12, 0);
+    // 不用主题默认内边距(约 10 px):82 px 高的横幅里,标题与说明各占一行,上下各留 14 px。
+    lv_obj_set_style_pad_all(s_paused, 0, 0);
     lv_obj_clear_flag(s_paused, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *p = label(s_paused, &lv_font_montserrat_20, 0xFFFFFF, LV_SYMBOL_PAUSE "  PAUSED");
-    lv_obj_align(p, LV_ALIGN_TOP_MID, 0, 6);
-    lv_obj_t *ph = label(s_paused, FONT_TEXT, 0xFFFFFF, "Agent is blocked.\nPress OK to resume.");
-    lv_obj_set_style_text_align(ph, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(ph, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_align(p, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_t *ph = label(s_paused, FONT_TEXT, 0xFFFFFF, "Press OK to resume");
+    lv_obj_align(ph, LV_ALIGN_BOTTOM_MID, 0, -14);
     lv_obj_add_flag(s_paused, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *foot = label(s_live, FONT_TEXT, COL_MUTED, "OK pause    " LV_SYMBOL_DOWN " setup");
@@ -165,19 +166,21 @@ static void build_setup(void)
     s_setup = screen();
     header(s_setup, "Setup", false);
     lv_obj_t *c = card(s_setup, PHONE_Y, ACT_Y + ACT_H - PHONE_Y);
-    char text[420];
+    // 每行都在卡片内宽(188 px,Montserrat 14)以内,手动断行,不靠自动折行;
+    // 共 11 行 176 px,卡片可用高度 226 px。改文案时重新核对宽度和行数。
+    char text[256];
     snprintf(text, sizeof(text),
-             "1. iPhone: Settings > Accessibility > Touch > AssistiveTouch: On\n\n"
-             "2. iPhone: Settings > Bluetooth > pair \"%s\"\n\n"
-             "3. Computer: start the agent server, then\n   python3 tools/usb_link.py\n\n"
-             "4. Mirror the screen to \"iPhone Agent\" and calibrate in the web UI",
+             "1. iPhone: turn on\n    AssistiveTouch\n\n"
+             "2. iPhone Bluetooth: pair\n    \"%s\"\n\n"
+             "3. Computer: start server,\n    run tools/usb_link.py\n\n"
+             "4. Mirror to \"iPhone\n    Agent\", then calibrate",
              s_ble_name);
     lv_obj_t *l = label(c, FONT_TEXT, COL_TEXT, text);
     lv_obj_set_width(l, CARD_W - 2 * CARD_PAD);
     lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
 
     lv_obj_t *foot = label(s_setup, FONT_TEXT, COL_MUTED,
-                           LV_SYMBOL_UP " back    hold " LV_SYMBOL_UP " forget phone");
+                           LV_SYMBOL_UP " back      hold " LV_SYMBOL_UP " forget");  // 172 px,避开底部圆角
     lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -8);
 }
 
@@ -258,13 +261,13 @@ static void refresh_battery(void)
 {
     int soc = s_soc;
     if (soc < 0) {
-        lv_label_set_text(s_battery, "");  // 读不到电量就不画数字
+        lv_label_set_text(s_battery, "");  // 读不到电量就不画图标
         return;
     }
     const char *icon = soc > 80 ? LV_SYMBOL_BATTERY_FULL : soc > 55 ? LV_SYMBOL_BATTERY_3
                      : soc > 30 ? LV_SYMBOL_BATTERY_2 : soc > 10 ? LV_SYMBOL_BATTERY_1
                      : LV_SYMBOL_BATTERY_EMPTY;
-    lv_label_set_text_fmt(s_battery, "%d%% %s", soc, icon);
+    lv_label_set_text(s_battery, icon);  // 只画图标:百分比文字会被右上角圆角遮住
     lv_obj_set_style_text_color(s_battery, lv_color_hex(soc <= 10 ? COL_RED : COL_MUTED), 0);
 }
 
