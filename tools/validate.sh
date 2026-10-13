@@ -28,6 +28,10 @@ run_static_checks() {
         tests/test_agent_exec.c main/agent_exec.c main/agent_keymap.c \
         -o "${test_dir}/test_agent_exec"
     "${test_dir}/test_agent_exec"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_agent_text.c main/agent_text.c \
+        -o "${test_dir}/test_agent_text"
+    "${test_dir}/test_agent_text"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Icomponents/bsp/src \
         tests/test_bsp_display_rounding.c components/bsp/src/bsp_display_rounding.c \
         -o "${test_dir}/test_bsp_display_rounding"

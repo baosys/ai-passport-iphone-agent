@@ -149,7 +149,8 @@ The board support package in `components/bsp` is the unchanged FoloToy baseline.
 - Bluetooth delivers reports once per connection event (11.25 to 30 ms, chosen by iOS), so pointer motion is
   slightly coarser than over USB; the server's closed-loop aiming corrects the remaining error.
 - Over Wi-Fi, Wi-Fi and Bluetooth share one radio, which adds latency to each command. Prefer the USB link.
-- Keyboard input is ASCII with the US layout, as in the reference project.
+- Keyboard input is ASCII with the US layout, as in the reference project. The Passport screen shows Chinese
+  (all of GB2312) in commands and Wi-Fi names, but `type` cannot enter Chinese on the phone.
 - The same iOS limits apply: some screens are not mirrored, and the phone must stay unlocked.
 
 ## Responsible use

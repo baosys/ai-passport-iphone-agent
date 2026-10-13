@@ -3,12 +3,24 @@
 #include "agent_bridge.h"
 #include "agent_hid.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "bsp_display.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 #include "lvgl.h"
+
+static const char *TAG = "agent_ui";
+
+// 14 px 正文字体:Montserrat 14 负责拉丁字母和 LV_SYMBOL 图标,缺的字形回退到
+// agent_cjk_14(GB2312 全部汉字与全角标点,见 tools/gen_cjk_font.py)。命令里的 type 文本、
+// Wi-Fi 名都可能是中文。Montserrat 描述符在 Flash 里是 const,所以复制一份可写的再挂回退;
+// 行高沿用 Montserrat 的 16 px,汉字字形落在这一行内,布局不变。
+LV_FONT_DECLARE(agent_cjk_14);
+static lv_font_t s_text_font;
+#define FONT_TEXT (&s_text_font)
 
 // 深色面板:屏幕常在手机旁边,暗底更省电,状态色更醒目。
 #define COL_BG      0x0E1116
@@ -90,12 +102,13 @@ static void status_card(lv_obj_t *parent, int y, const char *icon_title,
                         lv_obj_t **state, lv_obj_t **sub)
 {
     lv_obj_t *c = card(parent, y, STATUS_H);
-    label(c, &lv_font_montserrat_14, COL_MUTED, icon_title);
+    label(c, FONT_TEXT, COL_MUTED, icon_title);
     *state = label(c, &lv_font_montserrat_20, COL_TEXT, "");
     lv_obj_set_pos(*state, 0, 18);
-    *sub = label(c, &lv_font_montserrat_14, COL_MUTED, "");
+    *sub = label(c, FONT_TEXT, COL_MUTED, "");
     lv_obj_set_pos(*sub, 0, 40);
-    lv_obj_set_width(*sub, CARD_W - 2 * CARD_PAD);
+    // 固定为一行高:否则长文本会折到第二行,被卡片底边裁掉一半。
+    lv_obj_set_size(*sub, CARD_W - 2 * CARD_PAD, lv_font_get_line_height(FONT_TEXT));
     lv_label_set_long_mode(*sub, LV_LABEL_LONG_DOT);
 }
 
@@ -104,7 +117,7 @@ static void header(lv_obj_t *scr, const char *title, bool with_battery)
     lv_obj_t *t = label(scr, &lv_font_montserrat_20, COL_TEXT, title);
     lv_obj_set_pos(t, 24, 16);
     if (with_battery) {
-        s_battery = label(scr, &lv_font_montserrat_14, COL_MUTED, "");
+        s_battery = label(scr, FONT_TEXT, COL_MUTED, "");
         lv_obj_align(s_battery, LV_ALIGN_TOP_RIGHT, -24, 20);
     }
 }
@@ -117,14 +130,14 @@ static void build_live(void)
     status_card(s_live, LINK_Y, LV_SYMBOL_SHUFFLE "  Server", &s_link_state, &s_link_sub);
 
     lv_obj_t *act = card(s_live, ACT_Y, ACT_H);
-    s_count = label(act, &lv_font_montserrat_14, COL_MUTED, "Activity");
+    s_count = label(act, FONT_TEXT, COL_MUTED, "Activity");
     for (int i = 0; i < RECENT_ROWS; i++) {
         // 命令在左(超长截断),耗时右对齐,两者互不挤占。
-        s_recent_cmd[i] = label(act, &lv_font_montserrat_14, COL_TEXT, "");
+        s_recent_cmd[i] = label(act, FONT_TEXT, COL_TEXT, "");
         lv_obj_set_pos(s_recent_cmd[i], 0, 16 + i * ROW_H);
-        lv_obj_set_width(s_recent_cmd[i], CARD_W - 2 * CARD_PAD - 60);
-        lv_label_set_long_mode(s_recent_cmd[i], LV_LABEL_LONG_CLIP);
-        s_recent_ms[i] = label(act, &lv_font_montserrat_14, COL_MUTED, "");
+        lv_obj_set_size(s_recent_cmd[i], CARD_W - 2 * CARD_PAD - 60, lv_font_get_line_height(FONT_TEXT));
+        lv_label_set_long_mode(s_recent_cmd[i], LV_LABEL_LONG_DOT);
+        s_recent_ms[i] = label(act, FONT_TEXT, COL_MUTED, "");
         lv_obj_align(s_recent_ms[i], LV_ALIGN_TOP_RIGHT, 0, 16 + i * ROW_H);
     }
 
@@ -138,12 +151,12 @@ static void build_live(void)
     lv_obj_clear_flag(s_paused, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *p = label(s_paused, &lv_font_montserrat_20, 0xFFFFFF, LV_SYMBOL_PAUSE "  PAUSED");
     lv_obj_align(p, LV_ALIGN_TOP_MID, 0, 6);
-    lv_obj_t *ph = label(s_paused, &lv_font_montserrat_14, 0xFFFFFF, "Agent is blocked.\nPress OK to resume.");
+    lv_obj_t *ph = label(s_paused, FONT_TEXT, 0xFFFFFF, "Agent is blocked.\nPress OK to resume.");
     lv_obj_set_style_text_align(ph, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(ph, LV_ALIGN_BOTTOM_MID, 0, -4);
     lv_obj_add_flag(s_paused, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t *foot = label(s_live, &lv_font_montserrat_14, COL_MUTED, "OK pause    " LV_SYMBOL_DOWN " setup");
+    lv_obj_t *foot = label(s_live, FONT_TEXT, COL_MUTED, "OK pause    " LV_SYMBOL_DOWN " setup");
     lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -8);
 }
 
@@ -159,11 +172,11 @@ static void build_setup(void)
              "3. Computer: start the agent server, then\n   python3 tools/usb_link.py\n\n"
              "4. Mirror the screen to \"iPhone Agent\" and calibrate in the web UI",
              s_ble_name);
-    lv_obj_t *l = label(c, &lv_font_montserrat_14, COL_TEXT, text);
+    lv_obj_t *l = label(c, FONT_TEXT, COL_TEXT, text);
     lv_obj_set_width(l, CARD_W - 2 * CARD_PAD);
     lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
 
-    lv_obj_t *foot = label(s_setup, &lv_font_montserrat_14, COL_MUTED,
+    lv_obj_t *foot = label(s_setup, FONT_TEXT, COL_MUTED,
                            LV_SYMBOL_UP " back    hold " LV_SYMBOL_UP " forget phone");
     lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -8);
 }
@@ -179,7 +192,7 @@ static void refresh_phone(agent_hid_state_t hid)
     switch (hid) {
     case AGENT_HID_READY:
         set_state(s_phone_state, COL_GREEN, "Connected");
-        lv_label_set_text(s_phone_sub, "Bluetooth mouse + keyboard");
+        lv_label_set_text(s_phone_sub, "BLE mouse + keyboard");
         break;
     case AGENT_HID_CONNECTED:
         set_state(s_phone_state, COL_BLUE, "Pairing...");
@@ -280,8 +293,33 @@ static void tick(lv_timer_t *t)
     }
 }
 
+static bool has_glyph(uint32_t cp)
+{
+    lv_font_glyph_dsc_t g = {0};
+    return lv_font_get_glyph_dsc(FONT_TEXT, &g, cp, 0) && !g.is_placeholder;
+}
+
+// 启动时抽查字形覆盖并写日志:常用字、全角标点、拉丁字母和图标都应在,
+// U+9F98(龘,不在 GB2312)应缺失,保证这项检查不会无条件通过。
+static void check_glyphs(void)
+{
+    static const uint32_t must[] = { 0x4E2D, 0x6587, 0x4F60, 0x597D, 0xFF0C, 0x3002, 0x201C, 'A', 0xF00C };
+    int missing = 0;
+    for (size_t i = 0; i < sizeof(must) / sizeof(must[0]); i++) {
+        if (!has_glyph(must[i])) {
+            ESP_LOGE(TAG, "font lacks U+%04" PRIX32, must[i]);
+            missing++;
+        }
+    }
+    if (has_glyph(0x9F98)) ESP_LOGE(TAG, "glyph check is broken: U+9F98 should be missing");
+    if (missing == 0) ESP_LOGI(TAG, "font ok: Latin + symbols + GB2312 Chinese");
+}
+
 void agent_ui_start(const char *ble_name, bool wifi_configured)
 {
+    s_text_font = lv_font_montserrat_14;
+    s_text_font.fallback = &agent_cjk_14;
+    check_glyphs();
     s_ble_name = ble_name;
     s_wifi_configured = wifi_configured;
     build_live();

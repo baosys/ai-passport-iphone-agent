@@ -1,5 +1,7 @@
 #include "agent_bridge.h"
 
+#include "agent_text.h"
+
 #include "agent_exec.h"
 #include "agent_hid.h"
 
@@ -66,7 +68,7 @@ static void record(const char *line, uint32_t ms, bool ok)
     xSemaphoreTake(s_state_lock, portMAX_DELAY);
     memmove(&s_snap.recent[1], &s_snap.recent[0], sizeof(s_snap.recent[0]) * (AGENT_RECENT_COUNT - 1));
     agent_recent_t *r = &s_snap.recent[0];
-    snprintf(r->line, sizeof(r->line), "%s", line);
+    agent_utf8_copy(r->line, sizeof(r->line), line);
     r->ms = ms > UINT16_MAX ? UINT16_MAX : (uint16_t)ms;
     r->ok = ok;
     s_snap.commands++;

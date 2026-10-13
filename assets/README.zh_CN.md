@@ -15,6 +15,10 @@
 - 添加字库前评估 Flash 与内部 RAM 影响；ESP32-C3 无 PSRAM。
 - 不提交许可不允许分发的字库。
 
+| 文件 | 字级与格式 | 用途与来源 |
+| --- | --- | --- |
+| [`fonts/agent_cjk_14.c`](fonts/agent_cjk_14.c) | 14 px，4 bpp，未压缩的 LVGL 9 C 字库；7449 个字形，约占 760 KB Flash，不占 RAM | 作为 Montserrat 14 的中文回退字库，用于全部 14 px 界面文字（`main/agent_ui.c`）。覆盖 GB2312 全部字符（6763 个汉字及全角标点、符号），另加破折号、弯引号、省略号、间隔号与欧元符号。由 [`tools/gen_cjk_font.py`](../tools/gen_cjk_font.py) 调用 lv_font_conv 1.5.3，从思源黑体 Source Han Sans SC Regular 2.001（[adobe-fonts/source-han-sans](https://github.com/adobe-fonts/source-han-sans)，SIL Open Font License 1.1）生成。GB2312 以外的字符显示为 LVGL 占位方框。 |
+
 ## 图片（images）
 
 可复用的源图与生成的显示资产放在 `images/`。

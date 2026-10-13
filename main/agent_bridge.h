@@ -24,7 +24,7 @@ typedef enum {
 #define AGENT_RECENT_COUNT 5
 
 typedef struct {
-    char line[24];          // 命令(截断)
+    char line[40];          // 命令(按 UTF-8 字符边界截断)
     uint16_t ms;            // 执行耗时
     bool ok;
 } agent_recent_t;
