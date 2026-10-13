@@ -1,6 +1,6 @@
 <div align="center">
 
-# ESP32 iPhone Agent
+# AI Passport iPhone Agent
 
 **让 AI 操作一部真实的 iPhone：只要一块约 40 多元的 ESP32，不需要开发者账号、不需要 Xcode、不用越狱。**
 
@@ -35,7 +35,7 @@ USB 鼠标加键盘。大脑可以是任何兼容 OpenAI 接口的视觉模型�
 大多数 iPhone 自动化方案通过 XCTest / WebDriverAgent 控制手机，需要 Mac、Xcode、一个签过名的辅助 App，还要 Apple
 开发者账号（免费账号的签名 7 天就过期）。本项目走的是人用手机的路径：看屏幕、动指针，所以手机上什么都不用装。
 
-|                          | ESP32 iPhone Agent     | XCTest / WebDriverAgent 类工具 |
+|                          | AI Passport iPhone Agent | XCTest / WebDriverAgent 类工具 |
 |--------------------------|------------------------|--------------------------------|
 | Apple 开发者账号         | **不需要**             | 需要（给测试程序签名）         |
 | Xcode                    | **不需要**             | 需要                           |

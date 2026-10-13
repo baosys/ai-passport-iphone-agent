@@ -1,6 +1,6 @@
 <div align="center">
 
-# ESP32 iPhone Agent
+# AI Passport iPhone Agent
 
 **Let an AI model use a real iPhone — with a $7 ESP32. No Mac, no developer account, no jailbreak.**
 
@@ -37,7 +37,7 @@ Most iPhone automation drives the phone through XCTest / WebDriverAgent. That ne
 helper app and an Apple developer account (a free account's signature expires every 7 days). This project
 uses the same paths a person uses — the screen and a pointer — so the phone needs nothing installed.
 
-|                                  | ESP32 iPhone Agent        | XCTest / WebDriverAgent tools |
+|                                  | AI Passport iPhone Agent  | XCTest / WebDriverAgent tools |
 |----------------------------------|---------------------------|-------------------------------|
 | Apple developer account          | **Not needed**            | Needed (to sign the runner)   |
 | Xcode                            | **Not needed**            | Needed                        |
