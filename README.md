@@ -180,6 +180,7 @@ Set in `server/.env` (see [`.env.example`](server/.env.example)):
 | `PORT` / `DEVICE_PORT` | `8890` / `7300` | Web UI port / port the board connects to |
 | `HIDAGENT_DATA` | `~/.hidagent` | Calibration and debug traces |
 | `HIDAGENT_DEBUG` | `0` | Debug mode, see below |
+| `HIDAGENT_POINTER_LAG` | `0.35` | Seconds to wait after nudging the pointer before looking for it on the mirrored screen (Bluetooth adds latency) |
 
 ### Local model (optional)
 

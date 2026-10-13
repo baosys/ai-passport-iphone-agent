@@ -9,6 +9,7 @@ work for any frame size.
 import asyncio
 import json
 import logging
+import os
 import time
 from collections import deque
 from pathlib import Path
@@ -26,6 +27,10 @@ TAP_GAP = 0.15          # seconds to stay still after a click, so iOS sees a fin
 NUDGE = 12              # mouse units the pointer is wiggled by to find it on screen
 AIM_TOLERANCE = 0.008   # screen fraction; a bigger miss is corrected before pressing
 MAX_MISS = 0.06         # bigger misses are still corrected, but not learned from (they may be misreadings)
+EDGE_PUSH = 0.25        # screen fraction pushed past an edge so the pointer stops exactly on it
+# Seconds from a nudge until the mirrored frame can show it. A Bluetooth board (AI Passport) adds radio latency on
+# top of AirPlay's, so the first new frame after a nudge often still shows the old pointer; wait this long first.
+POINTER_LAG = float(os.environ.get("HIDAGENT_POINTER_LAG", 0.35))
 
 
 class Phone:
@@ -85,7 +90,8 @@ class Phone:
         await self.screen.settled(quiet=0.2, least=0.3, most=1.5)
         before, sent = self.screen.frame, time.time()
         await self.device.send(f"move {NUDGE} 0")
-        after = await self.screen.fresh(sent, 1.0)
+        await asyncio.sleep(POINTER_LAG)
+        after = await self.screen.fresh(sent + POINTER_LAG, 1.0)
         if after:
             await self.screen.settled(quiet=0.15, least=0.1, most=0.6)
             after = self.screen.frame
@@ -117,7 +123,8 @@ class Phone:
         await self.screen.settled(quiet=0.15, least=0.1, most=0.6)  # pointer at rest
         before, sent = self.screen.frame, time.time()
         await self.device.send(f"move {nudge} 0")
-        after = await self.screen.fresh(sent, 0.6)
+        await asyncio.sleep(POINTER_LAG)
+        after = await self.screen.fresh(sent + POINTER_LAG, 0.6)
         if after:
             await self.screen.settled(quiet=0.1, least=0.05, most=0.4)
             after = self.screen.frame
@@ -209,10 +216,29 @@ class Phone:
         await self.device.send(f"key {combo}")
 
     async def go_home(self) -> None:
-        await self.swipe(0.5, 0.995, 0.5, 0.6, hold=False)  # resting here would open the app switcher
+        """Swipe up from the home indicator (no rest at the end: that would open the app switcher)."""
+        await self._edge_swipe((0.5, 0.9), (0, EDGE_PUSH), (0.5, 1.0), (0.5, 0.6))
 
     async def go_back(self) -> None:
-        await self.swipe(0.005, 0.45, 0.6, 0.45, hold=False)
+        """Swipe in from the left edge."""
+        await self._edge_swipe((0.1, 0.45), (-EDGE_PUSH, 0), (0.0, 0.45), (0.6, 0.45))
+
+    async def _edge_swipe(self, near: tuple[float, float], push: tuple[float, float],
+                          edge: tuple[float, float], end: tuple[float, float]) -> None:
+        """A system gesture that must start exactly on a screen edge.
+
+        Aiming at the edge is not precise enough: the calibration error is largest there, and a press a few
+        percent inside the screen is an ordinary drag on the app. So move close, then push past the edge by a
+        fraction of the screen; iOS stops the pointer at the edge, which pins it there whatever the error.
+        """
+        await self.point(*near)
+        await self.device.send(f"move {round(push[0] * self.span['w'])} {round(push[1] * self.span['h'])}")
+        self._pos = (self._dx(edge[0]), self._dy(edge[1]))
+        await self.device.send("press")
+        try:
+            await self._move_to(self._dx(end[0]), self._dy(end[1]), rehome=False)
+        finally:
+            await self.device.send("release")
 
     def _dx(self, x: float) -> int:
         return round(min(max(self._fix(x, "x"), 0), 1) * self.span["w"])

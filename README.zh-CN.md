@@ -170,6 +170,7 @@ hardware/flash.sh            # 可选参数：[串口] [--debug]
 | `PORT` / `DEVICE_PORT` | `8890` / `7300` | 网页端口 / 板子连接的端口 |
 | `HIDAGENT_DATA` | `~/.hidagent` | 校准数据和调试记录 |
 | `HIDAGENT_DEBUG` | `0` | 调试模式，见下文 |
+| `HIDAGENT_POINTER_LAG` | `0.35` | 轻推指针后等待多少秒再在镜像画面里找它（蓝牙会增加延迟） |
 
 ### 本地模型（可选）
 
