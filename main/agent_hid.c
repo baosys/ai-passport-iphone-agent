@@ -90,6 +90,19 @@ static void advertise(void)
         ESP_LOGE(TAG, "adv fields failed: %d", rc);
         return;
     }
+    // iPhone 主动扫描时会取扫描响应;空响应会让 iOS 丢掉名字,设备在蓝牙列表里一闪而过。
+    struct ble_hs_adv_fields rsp = {
+        .name = (uint8_t *)s_name,
+        .name_len = (uint8_t)strlen(s_name),
+        .name_is_complete = 1,
+        .tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO,
+        .tx_pwr_lvl_is_present = 1,
+    };
+    rc = ble_gap_adv_rsp_set_fields(&rsp);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "scan response fields failed: %d", rc);
+        return;
+    }
     struct ble_gap_adv_params params = {
         .conn_mode = BLE_GAP_CONN_MODE_UND,
         .disc_mode = BLE_GAP_DISC_MODE_GEN,
