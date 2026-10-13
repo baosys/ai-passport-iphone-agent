@@ -4,96 +4,77 @@
 
 # AI Passport iPhone Agent
 
-Let an AI model use a real iPhone with a FoloToy AI Passport as its hands. No Mac, no developer account, no
-jailbreak, and nothing installed on the phone.
-
-This directory ports [onehumanbeing/esp32-iphone-agent](https://github.com/onehumanbeing/esp32-iphone-agent) to the
-AI Passport (ESP32-C3). It replaces the ESP32-S3 board in [`../hid_bridge`](../hid_bridge); the agent server in
-[`../../server`](../../server) is the same for both boards. Commands below run from this directory.
-
-## How it works
-
-| Role | Reference project | This port |
-|---|---|---|
-| Eyes | AirPlay mirroring to UxPlay on the computer | Same |
-| Brain | Planner + actor vision models on the computer (`python -m hidagent`) | Same, unchanged |
-| Hands | ESP32-S3 plugged into the iPhone as a **USB** mouse + keyboard | AI Passport paired to the iPhone as a **Bluetooth LE** mouse + keyboard |
-| Board link | Wi-Fi TCP to the server | **USB serial** through `tools/usb_link.py` (recommended) or Wi-Fi TCP |
-
-The ESP32-C3 has no USB OTG controller, so it cannot be a USB HID device. It does have Bluetooth LE, and iOS
-AssistiveTouch treats a Bluetooth mouse exactly like a USB one: the pointer moves, a click is a tap, a drag is a
-swipe. The phone's port stays free for charging, and Lightning iPhones need no camera adapter.
-
-```text
- iPhone ──AirPlay──▶ computer: UxPlay + agent server (vision model)
-   ▲                         │ line commands: move / click / type / key ...
-   │ Bluetooth LE HID        ▼
-   └──────────────── AI Passport ◀── USB serial (tools/usb_link.py) or Wi-Fi TCP
-```
-
-The board holds no logic. It executes the reference protocol (`ping`, `home`, `move <dx> <dy>`, `press`,
-`release`, `click`, `scroll <v> <h>`, `type <text>`, `key <combo>`) and answers `ok` or `err <reason>`. Moves are
-split into reports of at most 10 units sent every 15 ms, so iOS pointer acceleration stays predictable and the
-server's calibration holds.
+Let an AI model use a real iPhone, with a FoloToy AI Passport as its hands. The Passport pairs with the iPhone over
+Bluetooth as a mouse + keyboard; the agent server on your computer watches the phone through AirPlay screen
+mirroring and tells the Passport where to tap and what to type. Nothing is installed on the phone.
 
 ## What you need
 
-| Part | Notes |
-|---|---|
-| AI Passport | Flashed with this firmware |
-| iPhone | Any iPhone with AssistiveTouch; no cable or adapter to the board |
-| Computer | macOS or Linux on the same network as the phone; runs UxPlay and the agent server |
-| Vision model | Any OpenAI-compatible chat API that accepts images, as in the reference project |
+- AI Passport and a USB data cable
+- An iPhone
+- A computer (macOS or Linux) on the same Wi-Fi as the iPhone
+- An API key for an OpenAI-compatible model that accepts images
 
-## Quick start
+## Get it running
 
-### 1. Build and flash
+### 1. Flash the firmware to the AI Passport
 
-With ESP-IDF 5.5.3 activated (see [environment setup](docs/development/engineering/environment-setup.md)):
+Download `ai-passport-iphone-agent-<version>-full.bin` from
+[Releases](https://github.com/lewangdev/ai-passport-iphone-agent/releases), plug the Passport into the computer, and
+flash it (replace `PORT`, e.g. `/dev/cu.usbmodem1101` on macOS):
 
 ```bash
-idf.py set-target esp32c3
-idf.py build flash
+pip install esptool
+python -m esptool --chip esp32c3 -p PORT -b 460800 write_flash 0x0 ai-passport-iphone-agent-<version>-full.bin
 ```
 
-Flashing keeps NVS, so an existing Bluetooth pairing and Wi-Fi settings survive firmware updates.
+To build from source instead, activate ESP-IDF 5.5.3 (see [environment setup](docs/development/engineering/environment-setup.md))
+and run `idf.py set-target esp32c3 && idf.py build flash` in this directory.
 
-### 2. Start the agent server
+### 2. Run the server on the computer
 
-Follow the [server setup](../../README.md#2-install-and-start-the-server) in the repository README: install UxPlay,
-write `server/.env` with your model API, and run `python -m hidagent`. Skip its "Flash the board" step, which is for
-the ESP32-S3.
+From the repository root:
 
-### 3. Pair the iPhone (once)
+```bash
+brew install uxplay            # macOS; on Debian/Ubuntu: sudo apt install uxplay gstreamer1.0-plugins-{good,bad} gstreamer1.0-libav
+cd server
+python3 -m venv .venv && .venv/bin/pip install -e . pyserial
+cp .env.example .env           # set LLM_BASE_URL, LLM_MODEL and LLM_API_KEY
+set -a && . ./.env && set +a && .venv/bin/python -m hidagent
+```
+
+If Homebrew has no `uxplay`, build it from [FDH2/UxPlay](https://github.com/FDH2/UxPlay) and put it on your `PATH`.
+The first start takes a few minutes while GStreamer scans its plugins.
+
+### 3. Pair AI Passport with the iPhone (once)
 
 1. **Settings → Accessibility → Touch → AssistiveTouch**: turn it on.
-2. **Settings → Bluetooth**: tap **AI Passport** and confirm pairing. The Passport screen shows *Connected* and a
-   round pointer appears on the phone.
+2. **Settings → Bluetooth**: tap **AI Passport** under *Other Devices* and confirm. The Passport screen shows
+   *Connected* and a round pointer appears on the phone.
 
-### 4. Link the Passport to the server
+### 4. Connect AI Passport to the computer
 
-**USB (recommended).** Plug the Passport into the computer running the server and start the bridge:
-
-```bash
-pip install pyserial
-python3 tools/usb_link.py          # add --server HOST:PORT if the server is elsewhere, --log for the board log
-```
-
-**Wi-Fi.** Store the network and the server's LAN address on the Passport once; it then reconnects on its own,
-including on battery:
+Plug the Passport into the computer running the server and leave this running in a second terminal, from the
+repository root:
 
 ```bash
-python3 tools/usb_link.py --wifi "My Wi-Fi" "password" --board-server 192.168.1.10:7300
+server/.venv/bin/python hardware/ai_passport/tools/usb_link.py
 ```
 
-`--show-config` prints the stored settings, `--clear-wifi` returns to USB only. The server accepts one board at a
-time, so while the USB link is up the Wi-Fi link stands by instead of connecting.
+It prints `linked: ...` once the server has the board. Opening the port restarts the Passport; the iPhone reconnects
+on its own within about 30 seconds.
 
-### 5. Mirror, calibrate, run
+To run on battery over Wi-Fi instead, store the network and this computer's LAN address on the Passport once:
+`usb_link.py --wifi "My Wi-Fi" "password" --board-server 192.168.1.10:7300` (`--clear-wifi` undoes it).
 
-Open `http://<computer-ip>:8890`, start **Control Center → Screen Mirroring → iPhone Agent**, run **Manual
-controls → Calibrate**, then give the agent a task. Re-calibrate after changing `CONFIG_AGENT_MOVE_STEP`,
-`CONFIG_AGENT_REPORT_INTERVAL_MS` or the AssistiveTouch tracking speed.
+### 5. Mirror the screen and give it a task
+
+1. Open `http://<computer-ip>:8890`.
+2. On the iPhone: **Control Center → Screen Mirroring → iPhone Agent**.
+3. In the web page, run **Manual controls → Calibrate**, then type a task, e.g. *"Open Settings"*.
+
+Re-calibrate after changing the AssistiveTouch tracking speed, `CONFIG_AGENT_MOVE_STEP` or
+`CONFIG_AGENT_REPORT_INTERVAL_MS`.
 
 ## On the device
 
