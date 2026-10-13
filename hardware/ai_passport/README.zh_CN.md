@@ -9,7 +9,8 @@
 
 ## 准备
 
-- AI Passport 和一根 USB 数据线
+- AI Passport 和一根 USB 数据线。购买：[京东](https://item.jd.com/100318418103.html) · [小红书](https://www.xiaohongshu.com/goods-detail/6a8817140db08d0001d47538) · [抖音](https://v.douyin.com/5T5sJ01YpbU/) · [天猫](https://detail.tmall.com/item.htm?id=1076028511730) · [淘宝](https://item.taobao.com/item.htm?id=1075234033956)
+  (官网:[ai-passport.folotoy.cn](https://ai-passport.folotoy.cn/))
 - 一部 iPhone
 - 一台电脑(macOS 或 Linux),与 iPhone 连同一个 Wi-Fi
 - 一个支持图片输入、兼容 OpenAI 接口的模型 API Key

@@ -10,7 +10,8 @@ mirroring and tells the Passport where to tap and what to type. Nothing is insta
 
 ## What you need
 
-- AI Passport and a USB data cable
+- AI Passport and a USB data cable. Buy: [JD.com](https://item.jd.com/100318418103.html) · [Xiaohongshu](https://www.xiaohongshu.com/goods-detail/6a8817140db08d0001d47538) · [Douyin](https://v.douyin.com/5T5sJ01YpbU/) · [Tmall](https://detail.tmall.com/item.htm?id=1076028511730) · [Taobao](https://item.taobao.com/item.htm?id=1075234033956)
+  (official site: [ai-passport.folotoy.cn](https://ai-passport.folotoy.cn/en/))
 - An iPhone
 - A computer (macOS or Linux) on the same Wi-Fi as the iPhone
 - An API key for an OpenAI-compatible model that accepts images
