@@ -2,14 +2,14 @@
 
 # AI Passport iPhone Agent
 
-**Let an AI model use a real iPhone with a FoloToy AI Passport (ESP32-C3). No Mac, no developer account, no jailbreak.**
+**Let an AI model use a real iPhone with a FoloToy AI Passport. No Mac, no developer account, no jailbreak.**
 
 English · [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/lewangdev/ai-passport-iphone-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/lewangdev/ai-passport-iphone-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![Board](https://img.shields.io/badge/board-AI%20Passport%20(ESP32--C3)-red)
+![Board](https://img.shields.io/badge/board-AI%20Passport-red)
 
 </div>
 
@@ -41,7 +41,7 @@ uses the same paths a person uses — the screen and a pointer — so the phone 
 | Computer                         | Mac **or Linux**          | Mac                           |
 | App installed on the phone       | **None**                  | Test runner app               |
 | Jailbreak                        | Not needed                | Not needed                    |
-| Extra hardware                   | AI Passport (ESP32-C3)    | USB cable                     |
+| Extra hardware                   | AI Passport               | USB cable                     |
 | Works in any app, incl. games    | Yes (it only sees pixels) | Mostly (depends on the accessibility tree) |
 
 ## How it works
@@ -64,7 +64,7 @@ uses the same paths a person uses — the screen and a pointer — so the phone 
 
 | Part | Notes |
 |---|---|
-| **AI Passport** | FoloToy AI Passport (ESP32-C3), plus a USB data cable to the computer. Buy: [JD.com](https://item.jd.com/100318418103.html) · [Xiaohongshu](https://www.xiaohongshu.com/goods-detail/6a8817140db08d0001d47538) · [Douyin](https://v.douyin.com/5T5sJ01YpbU/) · [Tmall](https://detail.tmall.com/item.htm?id=1076028511730) · [Taobao](https://item.taobao.com/item.htm?id=1075234033956). Official site: [ai-passport.folotoy.cn](https://ai-passport.folotoy.cn/en/) |
+| **AI Passport** | FoloToy AI Passport, plus a USB data cable to the computer. Buy: [JD.com](https://item.jd.com/100318418103.html) · [Xiaohongshu](https://www.xiaohongshu.com/goods-detail/6a8817140db08d0001d47538) · [Douyin](https://v.douyin.com/5T5sJ01YpbU/) · [Tmall](https://detail.tmall.com/item.htm?id=1076028511730) · [Taobao](https://item.taobao.com/item.htm?id=1075234033956). Official site: [ai-passport.folotoy.cn](https://ai-passport.folotoy.cn/en/) |
 | **iPhone** | Any iPhone with AssistiveTouch. Nothing is plugged into the phone; it pairs with the Passport over Bluetooth. |
 | **Computer** | macOS or Linux, on the same network as the phone; runs UxPlay and the server. |
 | **Vision model** | Any OpenAI-compatible chat API that accepts images. Running a model locally is optional. |
@@ -237,7 +237,7 @@ sleeps, and a watchdog restarts it if it ever stops responding.
 ## Project layout
 
 ```
-hardware/   ai_passport/: AI Passport (ESP32-C3) firmware, Bluetooth HID (ESP-IDF), and the USB link tool
+hardware/   ai_passport/: AI Passport firmware, Bluetooth HID (ESP-IDF), and the USB link tool
             hid_bridge/ and flash.sh: original ESP32-S3 USB HID firmware (Arduino)
 server/     agent, web UI, screen capture and board link (Python, FastAPI)
             serve/: optional minimal server to host a Hugging Face vision model yourself

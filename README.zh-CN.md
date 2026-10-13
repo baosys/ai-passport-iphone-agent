@@ -2,14 +2,14 @@
 
 # AI Passport iPhone Agent
 
-**让 AI 操作一部真实的 iPhone：只要一个 FoloToy AI Passport（ESP32-C3），不需要开发者账号、不需要 Xcode、不用越狱。**
+**让 AI 操作一部真实的 iPhone：只要一个 FoloToy AI Passport，不需要开发者账号、不需要 Xcode、不用越狱。**
 
 [English](README.md) · 简体中文
 
 [![CI](https://github.com/lewangdev/ai-passport-iphone-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/lewangdev/ai-passport-iphone-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![Board](https://img.shields.io/badge/board-AI%20Passport%20(ESP32--C3)-red)
+![Board](https://img.shields.io/badge/board-AI%20Passport-red)
 
 </div>
 
@@ -39,7 +39,7 @@ ESP32-S3 USB 板子仍可配合同一个服务端使用，见[使用 ESP32-S3 �
 | 电脑                     | Mac **或 Linux**         | Mac                            |
 | 手机上安装 App           | **不需要**               | 需要装测试程序                 |
 | 越狱                     | 不需要                   | 不需要                         |
-| 额外硬件                 | AI Passport（ESP32-C3）  | USB 线                         |
+| 额外硬件                 | AI Passport              | USB 线                         |
 | 任意 App（包括游戏）     | 可以（只看像素）         | 大多可以（取决于无障碍控件树） |
 
 ## 工作原理
@@ -59,7 +59,7 @@ ESP32-S3 USB 板子仍可配合同一个服务端使用，见[使用 ESP32-S3 �
 
 | 部件 | 说明 |
 |---|---|
-| **AI Passport** | FoloToy AI Passport（ESP32-C3），外加一根连接电脑的 USB 数据线。购买：[京东](https://item.jd.com/100318418103.html) · [小红书](https://www.xiaohongshu.com/goods-detail/6a8817140db08d0001d47538) · [抖音](https://v.douyin.com/5T5sJ01YpbU/) · [天猫](https://detail.tmall.com/item.htm?id=1076028511730) · [淘宝](https://item.taobao.com/item.htm?id=1075234033956)。官网：[ai-passport.folotoy.cn](https://ai-passport.folotoy.cn/) |
+| **AI Passport** | FoloToy AI Passport，外加一根连接电脑的 USB 数据线。购买：[京东](https://item.jd.com/100318418103.html) · [小红书](https://www.xiaohongshu.com/goods-detail/6a8817140db08d0001d47538) · [抖音](https://v.douyin.com/5T5sJ01YpbU/) · [天猫](https://detail.tmall.com/item.htm?id=1076028511730) · [淘宝](https://item.taobao.com/item.htm?id=1075234033956)。官网：[ai-passport.folotoy.cn](https://ai-passport.folotoy.cn/) |
 | **iPhone** | 任何支持辅助触控的 iPhone。手机上不插任何东西，通过蓝牙与 Passport 配对。 |
 | **电脑** | macOS 或 Linux，和手机在同一个局域网；运行 UxPlay 和服务端。 |
 | **视觉模型** | 任何支持图片输入、兼容 OpenAI 接口的对话模型。本地部署是可选的。 |
@@ -221,7 +221,7 @@ LLM_EXTRA_BODY='{"chat_template_kwargs": {"enable_thinking": false}}'
 ## 目录结构
 
 ```
-hardware/   ai_passport/：AI Passport（ESP32-C3）固件，蓝牙 HID（ESP-IDF），以及 USB 连接工具
+hardware/   ai_passport/：AI Passport固件，蓝牙 HID（ESP-IDF），以及 USB 连接工具
             hid_bridge/ 和 flash.sh：原项目的 ESP32-S3 USB HID 固件（Arduino）
 server/     Agent、网页界面、屏幕采集和板子连接（Python，FastAPI）
             serve/：可选的极简服务，用来自己部署 Hugging Face 视觉模型
