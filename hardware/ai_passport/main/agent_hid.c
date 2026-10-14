@@ -168,6 +168,13 @@ static int gap_event(struct ble_gap_event *event, void *arg)
                      desc.conn_itvl, desc.conn_latency);
         }
         return 0;
+    case BLE_GAP_EVENT_SUBSCRIBE:
+        // 手机写 CCCD 才会真正接收输入报告;记下来便于排查「已连接但无指针」。
+        ESP_LOGI(TAG, "subscribe: attr_handle=%d reason=%d notify %d->%d indicate %d->%d",
+                 event->subscribe.attr_handle, event->subscribe.reason,
+                 event->subscribe.prev_notify, event->subscribe.cur_notify,
+                 event->subscribe.prev_indicate, event->subscribe.cur_indicate);
+        return 0;
     case BLE_GAP_EVENT_REPEAT_PAIRING:
         // iPhone 端「忽略此设备」后重新配对:丢掉旧绑定,接受新的。
         if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) == 0) {

@@ -1,0 +1,39 @@
+name: AI Passport firmware
+
+on:
+  push:
+    paths:
+      - "hardware/ai_passport/**"
+      - ".github/workflows/ai-passport-firmware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build firmware (ESP-IDF 5.5.3 / esp32c3)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.3
+          target: esp32c3
+          path: hardware/ai_passport
+          # 未知的 sdkconfig 项会被静默忽略,所以构建后确认 BLE 配置真的生效。
+          command: >-
+            idf.py -B build build &&
+            grep -x 'CONFIG_BT_NIMBLE_SM_LVL=2' sdkconfig &&
+            grep -x 'CONFIG_BT_NIMBLE_SVC_DIS_PNP_ID=y' sdkconfig &&
+            grep -x 'CONFIG_BT_NIMBLE_SVC_DIS_MANUFACTURER_NAME=y' sdkconfig &&
+            grep -x 'CONFIG_BT_NIMBLE_SVC_DIS_SERIAL_NUMBER=y' sdkconfig &&
+            idf.py -B build merge-bin -o FoloToy-AI-Passport-full.bin
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-passport-firmware-${{ github.sha }}
+          path: hardware/ai_passport/**/FoloToy-AI-Passport-full.bin
+          if-no-files-found: error
