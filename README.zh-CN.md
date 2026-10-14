@@ -13,7 +13,7 @@
 
 </div>
 
-<p align="center"><img src="docs/images/demo.jpg" alt="示例：左边是停在美团页面的 iPhone 和显示已连接、USB 已连上的 AI Passport；右边是下单完成后的网页界面，包括实时画面、实时日志、计划、运行统计和每一步的截图" width="100%"></p>
+<p align="center"><img src="docs/images/demo-meituan.jpg" alt="示例：左边是停在美团页面的 iPhone 和显示已连接、USB 已连上的 AI Passport；右边是下单完成后的网页界面，包括实时画面、实时日志、计划、运行统计和每一步的截图" width="100%"></p>
 
 **示例：在美团下单。** *"帮我在美团小象超市点一杯椰子水"*：Agent 输入中文“美团”找到并打开美团，进入小象超市，输入“椰子水”搜索，加入购物车，关掉凑单弹窗后提交订单并完成支付，共 28 个动作。左边是运行中的 iPhone 和 AI Passport；右边是网页界面，每一步的截图都会留在截图墙上，上面画出了点按的位置。
 
