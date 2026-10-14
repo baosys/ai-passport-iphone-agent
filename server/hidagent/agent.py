@@ -26,7 +26,9 @@ Plan only what the goal needs, from what you can see; never invent accounts, ema
 screens you have not seen. Later steps can stay general (e.g. "Draw the face on the canvas").
 The phone has a hardware keyboard, and keys are much faster than taps: plan with them where they work.
 To open an app, write "Open <app name>": the agent opens apps through search in one step, never by paging
-through home screens. Going to the home screen is one fast step too."""
+through home screens. Going to the home screen is one fast step too.
+When the goal reads information in one app and sends it in another (e.g. look up the weather, then message it to
+someone), plan the reading first, with a step to note what was read, then the sending."""
 
 ACTOR_PROMPT = """You operate an iPhone through a mouse pointer and a hardware keyboard. You see the current screen.
 Reply in this format, nothing else:
@@ -55,8 +57,14 @@ use them instead of taps:
   Accessibility -> Keyboards). Then key tab / shift+tab moves the ring to the next / previous item, arrow keys
   move it within a group, and key space activates the ringed item. Use it when the target is a move or two
   from the ring. With no ring, or when key tab changed nothing, it is off: tap instead.
+The agent only remembers recent actions, not earlier screens. When the goal needs something you read here later
+(e.g. read the weather, then message it to someone), keep it with note TEXT before you leave the screen: notes stay
+with you for the whole task. Write the facts themselves (dates, numbers, names, steps), in the language the message
+will use, not a description of the screen.
 The on-screen keyboard never appears, so its keys (Send, Search, Go, Done) are missing: press them with
 key enter. To send a chat message (WeChat, Messages, ...), type it and then key enter; do not look for a send button.
+Type the whole message in ONE type action on one line (separate points with ；or ; — a line break would send it
+early), composed from your notes. After key enter, check that it shows as a sent bubble in the chat.
 Swipes have no momentum: content moves exactly as far as the finger and stops. Prefer short swipes
 (a tenth to a quarter of the screen height) and check the result; repeat if needed rather than one big swipe.
 Time or number wheels (e.g. an alarm's time): first tap the number in the wheel's center row and type
@@ -76,6 +84,7 @@ Actions:
   key COMBO                 (one of: enter esc backspace tab space up down left right, or a combo
                              joined with +: cmd+space, cmd+h, cmd+a, shift+tab)
   open NAME                 (open an app by name through search)
+  note TEXT                 (keep facts read off the screen for later steps; does nothing on the phone)
   home | back | wait        (home: the home screen, by keyboard; back: a swipe in from the left edge)
   replan                    (the plan no longer fits the screen)
   done ANSWER               (the goal is reached; ANSWER is the result for the user)
@@ -87,15 +96,20 @@ finding its icon.
 DO: open App Store"""
 
 # not part of the action
-META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_shot", "changed", "seen", "found")
+META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_shot", "changed", "seen", "found",
+        "tier")
 REMEMBERED = ("cue", "look")  # what a routine keeps about a step besides the action
 
 # action name -> argument names; numeric arguments are screen coordinates: 0-1000 inside the agent, screenshot
 # pixels when talking to the actor (most vision models answer in pixels whatever the prompt asks for)
 ACTIONS = {"tap": ("x", "y"), "swipe": ("x1", "y1", "x2", "y2"), "circle": ("x", "y", "r"), "path": ("points",),
-           "type": ("text",), "key": ("combo",), "open": ("app",), "done": ("answer",), "fail": ("reason",),
+           "type": ("text",), "key": ("combo",), "open": ("app",), "note": ("text",), "done": ("answer",),
+           "fail": ("reason",),
            "home": (), "back": (), "wait": (), "replan": ()}
 TEXT_ARGS = ("text", "combo", "app", "answer", "reason")
+NO_PHONE = ("note", "done", "fail")  # actions that do nothing on the phone
+# who decided a step, cheapest first: plain code (shortcuts), a remembered routine, Jev, the actor, the planner
+TIERS = ("code", "routine", "jev", "actor", "planner")
 
 # key names both boards know (hardware/ai_passport/main/agent_keymap.c, hardware/hid_bridge/hid_bridge.ino);
 # a single printable ASCII character (h, a, 1, ...) also works. "delete" is AI Passport only.
@@ -198,6 +212,7 @@ class Agent:
         self._rest = ""  # the part of the task the shortcuts leave to the models
         self._routine: dict | None = None  # the remembered routine this task means
         self._asks = False  # the task wants an answer read off the screen
+        self._jev_s = 0.0  # seconds Jev spent on the triage
 
     @property
     def running(self) -> bool:
@@ -212,7 +227,7 @@ class Agent:
         self.task, self.plan, self.steps, self.shots = task, "", [], {}
         self._quick, self._replayed, self._rest = quick, [], rest
         self._routine, self._asks = self.routines.find(task), asks(task)
-        self._pointer = (0.0, 0.0)
+        self._pointer, self._jev_s = (0.0, 0.0), 0.0
         self.trace.start(task)
         self._job = asyncio.create_task(self._run())
 
@@ -232,12 +247,12 @@ class Agent:
         self.trace.write(kind="step", **step)
         log.info("agent: %s", step)
 
-    async def _ask(self, role: str, llm: LLM, system: str, prompt: str,
-                   temperature: float = 0) -> tuple[str, float, bytes | None]:
+    async def _ask(self, role: str, llm: LLM, system: str, prompt: str, temperature: float = 0,
+                   max_tokens: int = 600) -> tuple[str, float, bytes | None]:
         if not self.screen.live:  # never let the model act blind
             raise BlindError("lost the phone screen: reconnect Screen Mirroring")
         frame, started = self.screen.frame, time.time()
-        reply = await llm.chat(system, prompt, frame, temperature=temperature)
+        reply = await llm.chat(system, prompt, frame, max_tokens=max_tokens, temperature=temperature)
         seconds = round(time.time() - started, 2)
         self.trace.write(frame, kind="llm", role=role, model=llm.model, prompt=prompt,
                          reply=reply, seconds=seconds)
@@ -272,6 +287,25 @@ class Agent:
             self._record(action="stopped")
         except Exception as e:  # e.g. the planner itself is unreachable
             self._record(action="error", reason=repr(e))
+        finally:
+            self._tally()
+
+    def _tally(self) -> None:
+        """Log and trace which tier decided how many steps and how long they took, and whether a replay or a
+        shortcut had to hand over to the models."""
+        tiers: dict[str, dict] = {}
+        for s in self.steps:
+            if tier := s.get("tier"):
+                t = tiers.setdefault(tier, {"steps": 0, "seconds": 0.0})
+                t["steps"] += 1
+                t["seconds"] = round(t["seconds"] + sum(s.get(k, 0) for k in ("think_s", "act_s", "settle_s")), 2)
+        if self._jev_s:
+            tiers.setdefault("jev", {"steps": 0, "seconds": 0.0})["seconds"] += round(self._jev_s, 2)
+        last = self.steps[-1]["action"] if self.steps else None
+        # the cheap tiers started the task but the models had to finish it
+        escalated = "planner" in tiers and bool(self._quick or self._replayed or self._routine)
+        self.trace.write(kind="tiers", tiers=tiers, escalated=escalated, outcome=last)
+        log.info("agent: tiers %s, escalated=%s, outcome %s", tiers, escalated, last)
 
     async def _triage(self) -> None:
         """Let Jev decide what needs no model: shortcut clauses, a routine remembered under other words, and
@@ -282,6 +316,7 @@ class Agent:
         remembered = [] if self._routine else self.routines.tasks()
         started = time.time()
         t = await self.jev.triage(self.task, clauses, remembered)
+        self._jev_s = time.time() - started
         if t is None:
             return
         quick = []
@@ -303,13 +338,13 @@ class Agent:
         for act in self._quick:
             started = time.time()
             await self._do(act)
-            self._record(**act, thought="Shortcut: done by keyboard without asking the model.",
+            self._record(**act, tier="code", thought="Shortcut: done by keyboard without asking the model.",
                          thought_zh="快捷操作：直接用键盘完成，没有调用模型。", act_s=round(time.time() - started, 2))
         if not self._quick or self._rest:
             if self._quick and self.screen.live:
                 await self._settle()  # let the app come up before the planner looks
             return False
-        self._record(action="done", answer="")
+        self._record(action="done", answer="", tier="code")
         return True
 
     async def _replay(self) -> bool:
@@ -331,17 +366,18 @@ class Agent:
                     act, frame, found = *moved, True
                 if frame is None:
                     self.routines.broke(routine["task"])
-                    self._record(action="resume", reason=f"step {n + 1} of {len(steps)} looks different from last "
-                                 "time; the model takes over")
+                    self._record(action="resume", tier="routine", reason=f"step {n + 1} of {len(steps)} looks "
+                                 "different from last time; the model takes over")
                     return False
             started = time.time()
             await self._do(act)
             if found:
-                self._record(frame, **act, seen=True, found=True, act_s=round(time.time() - started, 2),
+                self._record(frame, **act, seen=True, found=True, tier="jev", act_s=round(time.time() - started, 2),
                              thought="Replay: the button had moved; Jev found it again, and its pixels match.",
                              thought_zh="重放：按钮换了位置，Jev 重新找到了它，像素也对得上。")
             else:
-                self._record(frame, **act, seen=frame is not None, act_s=round(time.time() - started, 2),
+                self._record(frame, **act, seen=frame is not None, tier="routine",
+                             act_s=round(time.time() - started, 2),
                              thought="Replay: done the way that worked last time, without asking the model.",
                              thought_zh="重放：照上次成功的做法，没有调用模型。")
             self._replayed.append(act)
@@ -358,7 +394,7 @@ class Agent:
             await self._settle()
             return False
         self.routines.replayed(routine["task"])
-        self._record(action="done", answer=routine["answer"])
+        self._record(action="done", answer=routine["answer"], tier="routine")
         return True
 
     async def _looks_like(self, cue: list[int], at: tuple[float, float], tries: int = 3) -> bytes | None:
@@ -385,8 +421,8 @@ class Agent:
     def _learn(self) -> None:
         """Remember how a finished task was done, for replaying it next time."""
         last = self.steps[-1]
-        if last["action"] != "done":
-            return
+        if last["action"] != "done" or any(s["action"] == "note" for s in self.steps):
+            return  # a task that carried notes typed what it read today: replaying that text would send stale news
         keep = []
         for i, s in enumerate(self.steps):
             if i < len(self._quick) or s["action"] not in ACTIONS or s["action"] in ("done", "fail", "replan", "wait"):
@@ -412,11 +448,12 @@ class Agent:
         settle = 0.0  # seconds spent waiting for the screen, on top of the model's think_s and each act_s
         for i, act in enumerate(acts):
             name = act["action"]
+            act["tier"] = "actor"
             if name == "replan" or stuck:
                 self._record(act.pop("_shot"), **act)
                 await self._replan(stuck=stuck)
                 return False
-            if name not in ("done", "fail"):
+            if name not in NO_PHONE:
                 started = time.time()
                 await self._do(act)
                 act["act_s"] = round(time.time() - started, 2)
@@ -425,6 +462,8 @@ class Agent:
             self._record(act.pop("_shot"), **act)
             if name in ("done", "fail"):
                 return True
+            if name == "note":
+                continue
             following = acts[i + 1]["action"] if i < len(acts) - 1 else None
             if name == "tap" and following in ("type", "key"):  # typing into a field that a missed tap never opened
                 settle += await self._settle()
@@ -433,6 +472,8 @@ class Agent:
                     return False  # skip the rest; the actor looks again
             elif name == "key" and following == "type":  # e.g. cmd+space: let the search field open before typing
                 settle += await self._settle(quiet=0.15, least=0.1, most=1.0)
+        if all(a["action"] == "note" for a in acts):
+            return False  # nothing happened on the phone: no waiting, and no "screen did NOT change"
         settle += await self._settle()
         # feedback for the next round
         self._finish(acts, settle, changed=vision.changed(seen, self.screen.frame, ignore=tuple(spots)))
@@ -445,7 +486,7 @@ class Agent:
 
     def _finish(self, acts: list[dict], settle: float, changed: bool) -> None:
         """Note the round's settle time and screen change on its last step, and log where the time went."""
-        self.steps[-1].update(settle_s=round(settle, 2), changed=changed)
+        self._last_move().update(settle_s=round(settle, 2), changed=changed)
         think, act = acts[0].get("think_s", 0), sum(a.get("act_s", 0) for a in acts)
         log.info("agent: round of %d (%s): think %.2fs, act %.2fs, settle %.2fs, total %.2fs, changed=%s",
                  len(acts), " ".join(a["action"] for a in acts), think, act, settle, think + act + settle, changed)
@@ -454,7 +495,11 @@ class Agent:
 
     def _missed(self) -> bool:
         """The previous round changed nothing on screen, so a tap may have landed off target."""
-        return bool(self.steps) and self.steps[-1].get("changed") is False
+        return self._last_move().get("changed") is False
+
+    def _last_move(self) -> dict:
+        """The latest step that was not a note (a note changes nothing on the phone)."""
+        return next((s for s in reversed(self.steps) if s["action"] != "note"), {})
 
     def _repeating(self, act: dict, limit: int = 3) -> bool:
         """True when the actor picks the same action as its last limit-1 moves and the last one did nothing.
@@ -476,27 +521,32 @@ class Agent:
         reply, seconds, frame = await self._ask("planner", self.planner, PLANNER_PROMPT, prompt)
         self.plan, plan_zh = parse_plan(reply)
         self._record(frame, action="replan (stuck)" if stuck else "plan", plan=self.plan, plan_zh=plan_zh,
-                     think_s=seconds)
+                     think_s=seconds, tier="planner")
 
     async def _next_actions(self) -> list[dict]:
         # actions and their effect only: echoing earlier thoughts makes the model repeat them instead of looking
-        hidden = ("t", "plan", "plan_zh", "think_s", "act_s", "settle_s", "shot", "thought", "thought_zh", "changed")
+        hidden = ("t", "plan", "plan_zh", "think_s", "act_s", "settle_s", "shot", "thought", "thought_zh", "changed",
+                  "tier")
         effect = {True: " -> screen changed", False: " -> screen did NOT change"}
         w, h = frame_size(self.screen.frame) or (1000, 1000)
         history = "\n".join(json.dumps(scale({k: v for k, v in s.items() if k not in hidden}, w / 1000, h / 1000))[:300]
                             + effect.get(s.get("changed"), "")
-                            for s in self.steps[-8:] if "plan" not in s) or "(none)"
-        prompt = (f"Goal: {self.task}\n\nPlan:\n{self.plan}\n\nRecent actions:\n{history}\n\n"
-                  f"The screenshot is {w} pixels wide and {h} pixels tall. Next action?")
+                            for s in self.steps[-8:] if "plan" not in s and s["action"] != "note") or "(none)"
+        notes = "\n".join(f"- {s['text']}" for s in self.steps if s["action"] == "note")[-6000:]
+        prompt = (f"Goal: {self.task}\n\nPlan:\n{self.plan}\n\n"
+                  + (f"Your notes so far (facts you read on earlier screens):\n{notes}\n\n" if notes else "")
+                  + f"Recent actions:\n{history}\n\nThe screenshot is {w} pixels wide and {h} pixels tall. "
+                  "Next action?")
         for attempt in range(3):  # retry unparseable replies, a little less deterministically
-            reply, seconds, frame = await self._ask("actor", self.actor, ACTOR_PROMPT, prompt, 0.4 * attempt)
+            reply, seconds, frame = await self._ask("actor", self.actor, ACTOR_PROMPT, prompt, 0.4 * attempt,
+                                                    max_tokens=1500)  # room for a message composed from notes
             try:
                 said = parse_actions(reply)
             except ValueError as e:
                 log.warning("unparseable actor reply (%s): %s", e, reply[:200])
                 continue
             acts = [scale(a, 1000 / w, 1000 / h) for a in said]
-            if self._missed() and _key(acts[0]) == _key(self.steps[-1]):  # same move that just did nothing
+            if self._missed() and _key(acts[0]) == _key(self._last_move()):  # same move that just did nothing
                 log.info("actor repeated an action that changed nothing; asking for another")
                 prompt += (f"\n\nYou just proposed {json.dumps(_key(said[0]))} again, but it changed nothing last "
                            "time. Choose a different action (another position, a shorter swipe, or another way).")
@@ -517,7 +567,7 @@ class Agent:
             case "open": await self.phone.open_app(shortcuts.search_term(a["app"]))
             case "home": await self.phone.go_home()
             case "back": await self.phone.go_back()
-            case "wait": pass
+            case "wait" | "note": pass
             case other: raise ValueError(f"unknown action {other!r}")
 
 
