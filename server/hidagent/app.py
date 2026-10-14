@@ -16,6 +16,7 @@ from .device import Device, DeviceError
 from .llm import LLM
 from .mirror import Mirror
 from .phone import Phone
+from .routines import Routines
 from .screen import Screen
 
 DATA_DIR = Path(os.environ.get("HIDAGENT_DATA", Path.home() / ".hidagent"))
@@ -28,7 +29,7 @@ screen = Screen(AIRPLAY_NAME, state=DATA_DIR / "receiver.json")
 phone = Phone(device, DATA_DIR / "calibration.json", screen)
 agent = Agent(phone, screen, LLM.from_env("ACTOR"), LLM.from_env("PLANNER"),
               Trace(DATA_DIR / "traces" if DEBUG else None),
-              max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)))
+              max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)), routines=Routines(DATA_DIR / "routines.json"))
 mirror = Mirror(phone, screen, agent.actor, DATA_DIR / "mirror.json", AIRPLAY_NAME, busy=lambda: agent.running)
 
 
@@ -234,6 +235,19 @@ async def agent_stop():
     await mirror.stop()
     await asyncio.sleep(0.1)  # let a gesture in flight finish its own release
     return await act(phone.reset()) if device.connected else {"ok": True}
+
+
+@app.get("/api/routines")
+def routines():
+    """Tasks the agent remembers how to do, and how often replaying them worked."""
+    return [{"task": r["task"], "steps": len(r["steps"]), "ok": r["ok"], "fails": r["fails"]}
+            for r in agent.routines.data.values()]
+
+
+@app.post("/api/routines/forget")
+def routines_forget(t: Text):
+    """Forget how a task was done, so the models work it out afresh next time."""
+    return {"ok": agent.routines.forget(t.text)}
 
 
 @app.post("/api/agent/clear")

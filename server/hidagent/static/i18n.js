@@ -65,6 +65,7 @@ function describeStep(s) {
     back: ["Go back", "返回"],
     wait: ["Wait for the screen", "等待画面加载"],
     hiccup: ["Hiccup — recovering", "出了点小问题，正在恢复"],
+    resume: ["Screen differs from last time — the model takes over", "画面和上次不一样，交给模型接手"],
     done: ["Done", "完成"],
     fail: ["Gave up", "放弃了"],
     stopped: ["Stopped by you", "已被你停止"],

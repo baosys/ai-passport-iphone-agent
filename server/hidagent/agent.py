@@ -13,6 +13,7 @@ from .debug import Trace
 from .device import DeviceError
 from .llm import LLM
 from .phone import Phone
+from .routines import Routines, asks, patch, same, target
 from .screen import Screen, frame_size
 
 log = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ finding its icon.
 DO: open App Store"""
 
 # not part of the action
-META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_shot", "changed")
+META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_shot", "changed", "seen")
 
 # action name -> argument names; numeric arguments are screen coordinates: 0-1000 inside the agent, screenshot
 # pixels when talking to the actor (most vision models answer in pixels whatever the prompt asks for)
@@ -178,8 +179,10 @@ class BlindError(RuntimeError):
 
 class Agent:
     def __init__(self, phone: Phone, screen: Screen, actor: LLM, planner: LLM, trace: Trace,
-                 max_steps: int = 100, max_failures: int = 3):  # max_steps 0: until done, fail or stop
+                 max_steps: int = 100, max_failures: int = 3,  # max_steps 0: until done, fail or stop
+                 routines: Routines | None = None):
         self.phone, self.screen, self.actor, self.planner = phone, screen, actor, planner
+        self.routines = routines or Routines(None)
         self.trace = trace
         self.max_steps, self.max_failures = max_steps, max_failures
         self.task, self.plan, self.steps = "", "", []
@@ -187,6 +190,7 @@ class Agent:
         self._pointer = (0.0, 0.0)  # last pointer position (screen fractions)
         self._job: asyncio.Task | None = None
         self._quick: list[dict] = []  # leading actions of the task that need no model (see shortcuts.py)
+        self._replayed: list[dict] = []  # actions replayed from a remembered routine (see routines.py)
 
     @property
     def running(self) -> bool:
@@ -199,7 +203,7 @@ class Agent:
         if rest and not self.screen.live:  # keyboard shortcuts alone work blind; the models need to see
             raise RuntimeError("no phone screen: start Screen Mirroring first")
         self.task, self.plan, self.steps, self.shots = task, "", [], {}
-        self._quick = quick
+        self._quick, self._replayed = quick, []
         self._pointer = (0.0, 0.0)
         self.trace.start(task)
         self._job = asyncio.create_task(self._run())
@@ -234,12 +238,13 @@ class Agent:
     async def _run(self) -> None:
         failures = 0
         try:
-            if await self._shortcuts():
+            if await self._shortcuts() or await self._replay():
                 return
             await self._replan()
             for _ in range(self.max_steps) if self.max_steps > 0 else itertools.count():
                 try:
                     if await self._step():
+                        self._learn()
                         return
                     failures = 0
                 except BlindError:
@@ -272,6 +277,77 @@ class Agent:
             return False
         self._record(action="done", answer="")
         return True
+
+    async def _replay(self) -> bool:
+        """Replay the routine remembered for this task, checking each press against last time.
+
+        Returns True when the replay finished the task; False when there is none, when the screen differs from
+        last time (the models take over from there), or when the task asks a question that needs a fresh look.
+        """
+        routine = self.routines.find(self.task)
+        if routine is None:
+            return False
+        steps = routine["steps"]
+        for n, step in enumerate(steps):
+            act = {k: v for k, v in step.items() if k != "cue"}
+            frame = None
+            if "cue" in step:
+                frame = await self._looks_like(step["cue"], target(act))
+                if frame is None:
+                    self.routines.broke(self.task)
+                    self._record(action="resume", reason=f"step {n + 1} of {len(steps)} looks different from last "
+                                 "time; the model takes over")
+                    return False
+            started = time.time()
+            await self._do(act)
+            self._record(frame, **act, seen=frame is not None, act_s=round(time.time() - started, 2),
+                         thought="Replay: done the way that worked last time, without asking the model.",
+                         thought_zh="重放：照上次成功的做法，没有调用模型。")
+            self._replayed.append(act)
+            if path := _pointer_path(act):
+                self._pointer = path[-1]
+            following = steps[n + 1]["action"] if n + 1 < len(steps) else None
+            if following is None:
+                break  # the last step: nothing more to check, so no waiting for the screen
+            if act["action"] == "key" and following == "type":
+                await self._settle(quiet=0.15, least=0.1, most=1.0)
+            elif act["action"] not in ("type", "key") or following not in ("type", "key"):
+                await self._settle()
+        if asks(self.task):  # the answer has to be read off today's screen, once it is there
+            await self._settle()
+            return False
+        self.routines.replayed(self.task)
+        self._record(action="done", answer=routine["answer"])
+        return True
+
+    async def _looks_like(self, cue: list[int], at: tuple[float, float], tries: int = 3) -> bytes | None:
+        """The current frame if the spot about to be pressed looks as it did last time, waiting a little for it."""
+        for attempt in range(tries):
+            frame = self.screen.frame
+            if frame and same(patch(frame, at), cue):
+                return frame
+            if attempt < tries - 1:
+                await asyncio.sleep(0.5)
+                await self._settle()
+        return None
+
+    def _learn(self) -> None:
+        """Remember how a finished task was done, for replaying it next time."""
+        last = self.steps[-1]
+        if last["action"] != "done":
+            return
+        keep = []
+        for i, s in enumerate(self.steps):
+            if i < len(self._quick) or s["action"] not in ACTIONS or s["action"] in ("done", "fail", "replan", "wait"):
+                continue  # shortcuts run by themselves next time; the rest is not an action
+            act, at = _key(s), target(s)
+            if at and s.get("changed") is False:
+                continue  # a press that did nothing
+            if at and ("think_s" in s or s.get("seen")) and i in self.shots:  # the shot was taken right before it
+                if (cue := patch(self.shots[i], at)) is not None:
+                    act["cue"] = cue
+            keep.append(act)
+        self.routines.learn(self.task, keep, last.get("answer", ""))
 
     async def _step(self) -> bool:
         """One see-think-act round (one or more actions). Returns True when the task is over."""
@@ -337,8 +413,8 @@ class Agent:
 
     async def _replan(self, stuck: bool = False) -> None:
         prompt = f"Goal: {self.task}"
-        if self._quick:
-            prompt += "\nAlready done: " + ", ".join(" ".join(map(str, a.values())) for a in self._quick)
+        if done := self._quick + self._replayed:
+            prompt += "\nAlready done: " + ", ".join(" ".join(map(str, a.values())) for a in done)
         if stuck:
             last = self.steps[-1] if self.steps else {}
             prompt += (f"\n\nThe previous plan got stuck (last event: {last.get('action')} {last.get('reason', '')}):"
