@@ -208,7 +208,7 @@ def relay_phone(tmp_path, monkeypatch, pasted):
         calls.append(f"open {name}")
 
     async def tap(x, y, aim=True):
-        calls.append(f"tap {x} {y}")
+        calls.append(f"tap {x} {y}" + ("" if aim else " blind"))
 
     async def previous_app():
         calls.append("previous app")
@@ -221,12 +221,12 @@ def test_chinese_is_copied_in_safari_and_pasted_back_in_the_app(tmp_path, monkey
     phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([True]))
     asyncio.run(phone.type("HSBC Pulse信用卡如何还款"))
     assert phone.relay.text == "HSBC Pulse信用卡如何还款"
-    assert calls == ["open Safari", "tap 0.5 0.45", "previous app"]
+    assert calls == ["open Safari", "tap 0.5 0.45 blind", "previous app"]  # no field tapped before: none to tap again
     assert device.sent == ["key cmd+l", "type 10.0.0.2:8890/123456", "key enter", "key cmd+v"]
 
 
-def test_a_relay_paste_that_changed_nothing_taps_the_field_again(tmp_path, monkeypatch):
+def test_the_field_is_tapped_again_after_the_round_trip(tmp_path, monkeypatch):
     phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([False, True]))
     phone.last_tap = (0.4, 0.1)
     asyncio.run(phone.type("你好"))
-    assert calls[-1] == "tap 0.4 0.1" and device.sent[-1] == "key cmd+v" and device.sent.count("key cmd+v") == 2
+    assert calls[-1] == "tap 0.4 0.1" and device.sent[-2:] == ["key cmd+v", "key cmd+v"]

@@ -82,3 +82,25 @@ def test_remote_peers():
     assert _remote("[fe80::1]:7000")
     assert not _remote("127.0.0.1:50123")
     assert not _remote("[::1]:50123")
+
+
+class Ran:
+    def __init__(self, stdout):
+        self.stdout = stdout
+
+
+def test_the_relay_address_is_the_local_end_of_the_mirroring_connection(monkeypatch):
+    def run(args, **_):
+        if args[0] == "ifconfig":
+            assert args[1] == "en14"
+            return Ran("en14: flags=8863<UP>\n\tinet6 fe80::6b%en14\n\tinet 169.254.217.189 netmask 0xffff0000\n")
+        return Ran("p79007\nn127.0.0.1:62175->127.0.0.1:64699\nn[fe80:23::6b:56a9]:62178->[fe80:23::1ce8]:62875\n")
+
+    monkeypatch.setattr(screen_module.subprocess, "run", run)
+    monkeypatch.setattr(screen_module.socket, "if_indextoname", lambda i: {0x23: "en14"}[i])
+    screen = Screen()
+    screen.pid = 79007
+    assert screen.local_ip() == "169.254.217.189"
+    ipv4 = Ran("p1\nn192.168.1.4:7000->192.168.1.9:5000\n")
+    monkeypatch.setattr(screen_module.subprocess, "run", lambda *a, **k: ipv4)
+    assert screen.local_ip() == "192.168.1.4"

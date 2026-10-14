@@ -284,6 +284,7 @@ class Phone:
             return False
         field = self.last_tap
         await self.open_app("Safari")
+        await self.screen.settled(quiet=0.3, least=1.0, most=4.0)  # cmd+l is lost while Safari is still opening
         await self.device.send("key cmd+l")
         await self._still()
         await self.device.send(f"type {url}")  # digits and signs: the pinyin keyboard leaves them in the address bar
@@ -291,9 +292,9 @@ class Phone:
         copied = False
         try:
             await asyncio.wait_for(self.relay.loaded.wait(), RELAY_LOAD)
-            await self.screen.settled(quiet=0.2, least=0.4, most=2.0)
-            for _ in range(2):  # the whole page is the copy button
-                await self.tap(0.5, 0.45)
+            await asyncio.sleep(0.5)  # until the page is drawn
+            for _ in range(2):  # the whole page is the copy button: no need to aim
+                await self.tap(0.5, 0.45, aim=False)
                 try:
                     await asyncio.wait_for(self.relay.copied.wait(), RELAY_COPY)
                     copied = True
@@ -304,13 +305,11 @@ class Phone:
             log.info("relay: Safari did not load %s", url)
         await self.previous_app()
         await self.screen.settled(quiet=0.3, least=0.5, most=2.0)
+        if field is not None:  # the field may lose its focus on the way: tap it again
+            await self.tap(*field)
         if not copied:
             return False
-        for attempt in range(2):
-            if attempt:  # the field lost its focus on the way: tap it again
-                if field is None:
-                    break
-                await self.tap(*field)
+        for _ in range(2):
             before = self.screen.frame
             await self.device.send("key cmd+v")
             await self.screen.settled(quiet=0.3, least=0.3, most=2.0)
@@ -356,9 +355,13 @@ class Phone:
         if name.isascii():
             await self.device.send(f"type {name}")
         else:  # an app name is short and common: pinyin finds it, and pasting it would open search again
-            await self._pinyin(name)
+            for line in textinput.pinyin_lines(name):
+                if line.startswith("key"):
+                    await self._still()  # a space sent while the candidates are still coming is lost
+                await self.device.send(line)
         if name.isascii():
             await self.device.send("key space")
+        await self._still()
         await self.device.send("key enter")
 
     async def _still(self) -> None:

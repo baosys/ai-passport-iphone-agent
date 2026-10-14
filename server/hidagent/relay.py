@@ -47,8 +47,9 @@ b.onclick = () => {{
 
 
 class Relay:
-    def __init__(self, port: int):
+    def __init__(self, port: int, host=None):
         self.port = port
+        self._host = host  # returns the address the phone reaches this computer on, or None
         self.code = ""
         self.text = ""
         self.offered = 0.0
@@ -57,7 +58,7 @@ class Relay:
 
     def offer(self, text: str) -> str | None:
         """Hold `text` on a new one-time page; its address as typed into Safari, or None without a network."""
-        ip = lan_ip()
+        ip = os.environ.get("HIDAGENT_RELAY_HOST") or (self._host and self._host()) or lan_ip()
         if ip is None:
             return None
         self.code, self.text, self.offered = f"{secrets.randbelow(900000) + 100000}", text, time.time()

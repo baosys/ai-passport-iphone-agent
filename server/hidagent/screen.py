@@ -227,6 +227,36 @@ class Screen:
             return 0 if _alive(self.pid) else None
         return sum(_remote(line.partition("->")[2]) for line in out.splitlines() if line.startswith("n"))
 
+    def local_ip(self) -> str | None:
+        """This computer's IPv4 address as the phone reaches it: the local end of the mirroring connection.
+
+        Unlike the default route, it stays right with a VPN up (its tunnel address is no use to the phone)."""
+        if not self.pid:
+            return None
+        try:
+            out = subprocess.run(["lsof", "-a", "-p", str(self.pid), "-iTCP", "-sTCP:ESTABLISHED", "-nP", "-Fn"],
+                                 capture_output=True, text=True, timeout=2).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        for line in out.splitlines():
+            local, _, peer = line[1:].partition("->")
+            if not (line.startswith("n") and _remote(peer)):
+                continue
+            host = local.rpartition(":")[0]
+            if not host.startswith("["):
+                return host
+            # IPv6 link-local, as lsof writes it on macOS: [fe80:<interface index in hex>::...]. A URL typed in
+            # Safari cannot carry the zone, so take the IPv4 address of the same interface.
+            zone = host[1:].split(":")[1] if host.startswith("[fe80:") else ""
+            try:
+                name = socket.if_indextoname(int(zone, 16))
+                out = subprocess.run(["ifconfig", name], capture_output=True, text=True, timeout=2).stdout
+            except (ValueError, OSError, subprocess.SubprocessError):
+                continue
+            for word in out.split("inet ")[1:]:
+                return word.split()[0]
+        return None
+
     @property
     def aspect(self) -> float:
         """Frame width / height (portrait iPhone as a fallback)."""

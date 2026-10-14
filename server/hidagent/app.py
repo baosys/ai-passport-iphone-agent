@@ -28,7 +28,8 @@ DEBUG = os.environ.get("HIDAGENT_DEBUG") == "1"
 device = Device()
 AIRPLAY_NAME = os.environ.get("AIRPLAY_NAME", "iPhone Agent")
 screen = Screen(AIRPLAY_NAME, state=DATA_DIR / "receiver.json")
-phone = Phone(device, DATA_DIR / "calibration.json", screen, relay=Relay(int(os.environ.get("PORT", 8890))))
+relay = Relay(int(os.environ.get("PORT", 8890)), screen.local_ip)
+phone = Phone(device, DATA_DIR / "calibration.json", screen, relay=relay)
 agent = Agent(phone, screen, LLM.from_env("ACTOR"), LLM.from_env("PLANNER"),
               Trace(DATA_DIR / "traces" if DEBUG else None),
               max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)), routines=Routines(DATA_DIR / "routines.json"),
