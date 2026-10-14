@@ -13,9 +13,9 @@ English · [简体中文](README.zh-CN.md)
 
 </div>
 
-<p align="center"><img src="docs/images/demo.jpg" alt="Example: the web UI after ordering coconut water in Meituan, with the live screen, live log, plan, run summary and step screenshots" width="100%"></p>
+<p align="center"><img src="docs/images/demo.jpg" alt="Example: left, the iPhone in Meituan next to the AI Passport showing Connected and USB linked; right, the web UI after the order, with the live screen, live log, plan, run summary and step screenshots" width="100%"></p>
 
-**Example — order on Meituan.** *"帮我在美团小象超市点一杯椰子水"* (order a coconut water from Meituan's Xiaoxiang Supermarket): the agent types "美团" to find and open Meituan, opens Xiaoxiang Supermarket, searches for "椰子水" (both typed in Chinese), adds it to the cart, closes the add-on popup, places the order and pays, in 28 actions. Every step's screenshot, with its tap drawn on top, stays on the step wall.
+**Example — order on Meituan.** *"帮我在美团小象超市点一杯椰子水"* (order a coconut water from Meituan's Xiaoxiang Supermarket): the agent types "美团" to find and open Meituan, opens Xiaoxiang Supermarket, searches for "椰子水" (both typed in Chinese), adds it to the cart, closes the add-on popup, places the order and pays, in 28 actions. Left: the iPhone and the AI Passport during the run; right: the web UI, where every step's screenshot, with its tap drawn on top, stays on the step wall.
 
 The agent sees the phone through AirPlay screen mirroring and touches it through an AI Passport, which pairs with
 the iPhone over Bluetooth as a mouse and keyboard. Any OpenAI-compatible vision model can be the brain — a cloud
