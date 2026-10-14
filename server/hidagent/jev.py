@@ -2,10 +2,11 @@
 
 The vision models plan and act. Jev answers the small questions around them in about half a second each:
 whether a step of the task is just "open an app", "go home" or "go back"; which remembered routine a reworded
-task means; whether the task asks for an answer; and, when a remembered button is no longer where it was, where
-it is now. The agent acts on an answer only when Jev is sure, and checks a found button against its remembered
-pixels before pressing it. Without TYPESAFE_API_KEY, or when Jev is unsure or unreachable, the agent keeps to
-its regex rules and pixel checks.
+task means; whether the task asks for an answer; whether the screen still shows the page a remembered step ran on;
+when a remembered button is no longer where it was, where it is now; and whether the task looks done. The agent
+acts on an answer only when Jev is sure (or, for a page or a finished task, clearly says no), and checks a found
+button against its remembered pixels before pressing it. Without TYPESAFE_API_KEY, or when Jev is unsure or
+unreachable, the agent keeps to its regex rules, pixel checks and models.
 """
 
 import base64
@@ -22,6 +23,8 @@ log = logging.getLogger(__name__)
 
 URL = "https://api.typesafe.ai/v1/systemone"
 SURE = 0.8  # probability under which an answer is not acted on
+NO = 0.2  # yes/no probability under which a page or a finished task is clearly not there
+QUICK = 3.0  # timeout (seconds) of the checks made between replayed steps, which must not hold them up for long
 MAX_CLAUSES = 4  # task steps asked about, from the start; the rest goes to the models anyway
 MAX_ROUTINES = 100  # remembered tasks offered as matches, most used first
 IMAGE_SIDES = (256, 1568)  # the API's smallest and largest image side, in pixels
@@ -53,6 +56,13 @@ def _image(jpeg: bytes) -> bytes:
     return out.getvalue()
 
 
+def _noul(answers: dict | None, key: str) -> float | None:
+    try:
+        return float(answers[key]["noul"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 class Jev:
     def __init__(self, key: str | None, model: str = "jev-latest", vision_model: str = "jev-preview",
                  timeout: float = 8.0, transport: httpx.AsyncBaseTransport | None = None):
@@ -68,7 +78,8 @@ class Jev:
     def enabled(self) -> bool:
         return bool(self.key)
 
-    async def ask(self, state, questions: dict, images: dict[str, bytes] | None = None) -> dict | None:
+    async def ask(self, state, questions: dict, images: dict[str, bytes] | None = None,
+                  timeout: float | None = None) -> dict | None:
         """The answers keyed like `questions`, or None when Jev is off or the request failed.
 
         `images` maps a reference written somewhere in `state` or `questions` to a JPEG.
@@ -77,17 +88,17 @@ class Jev:
             return None
         body = {"model": self.vision_model if images else self.model, "state": state, "questions": questions}
         headers = {"Authorization": f"Bearer {self.key}"}
-        if images:
-            body["assets"] = {ref: {"type": "image", "format": "jpg",
-                                    "data_base64": base64.b64encode(_image(jpeg)).decode()}
-                              for ref, jpeg in images.items()}
-            headers["TypeSafe-Danger-Zone-Images"] = "true"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+            if images:
+                body["assets"] = {ref: {"type": "image", "format": "jpg",
+                                        "data_base64": base64.b64encode(_image(jpeg)).decode()}
+                                  for ref, jpeg in images.items()}
+                headers["TypeSafe-Danger-Zone-Images"] = "true"
+            async with httpx.AsyncClient(timeout=timeout or self.timeout, transport=self.transport) as client:
                 reply = await client.post(URL, json=body, headers=headers)
                 reply.raise_for_status()
                 return reply.json()["answers"]
-        except (httpx.HTTPError, KeyError, ValueError) as e:
+        except (httpx.HTTPError, KeyError, ValueError, OSError) as e:  # OSError: a frame PIL cannot read
             log.warning("jev: %s", e)
             return None
 
@@ -139,3 +150,25 @@ class Jev:
             return None
         box = answers["where"]["box"]
         return box["left"], box["top"], box["right"], box["bottom"]
+
+    async def page(self, screen: bytes, page: str) -> float | None:
+        """How likely `screen` shows the page described by `page` (e.g. "Settings > General"); None without Jev."""
+        shot = uuid.uuid4().hex
+        answers = await self.ask({"screen": shot, "page": page}, {"there": {"type": "noul", "instructions": (
+            "Is the iPhone screen `screen` showing the page described by `page`: the same app and the same page "
+            "or screen in it, not a page next to it or a sheet or alert on top of it?")}},
+            images={shot: screen}, timeout=QUICK)
+        if (p := _noul(answers, "there")) is not None:
+            log.info("jev: page %r: %.2f", page, p)
+        return p
+
+    async def done(self, screen: bytes, task: str) -> float | None:
+        """How likely `task` has been fully done, judging by `screen` after the last step; None without Jev."""
+        shot = uuid.uuid4().hex
+        answers = await self.ask({"task": task, "screen": shot}, {"done": {"type": "noul", "instructions": (
+            "`task` was asked of an iPhone and `screen` is the phone's screen after the last step. Has `task` been "
+            "fully done, every part of it (e.g. a message not only typed but sent, a setting not only found but "
+            "changed), judging by `screen`?")}}, images={shot: screen}, timeout=QUICK)
+        if (p := _noul(answers, "done")) is not None:
+            log.info("jev: done %r: %.2f", task, p)
+        return p

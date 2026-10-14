@@ -4,9 +4,11 @@ Before each remembered tap or swipe, the replay checks that the spot it is about
 did last time (a small patch of the screen around it, not the whole screen, so a new chat or badge elsewhere does
 not matter). When it does not, Jev (jev.py) may find the button elsewhere, from a picture of it kept from last time;
 the replay presses it there only if the pixels there match too. Otherwise the replay stops and the models take
-over from there. A run that finishes
-replaces the routine with the path that worked; a routine that broke twice in a row is not replayed again until
-the models finish the task once more.
+over from there. Each checked step also keeps the actor's few words on the page it ran on ("Settings > General"):
+when Jev is on, it is asked whether the screen shows that page, and a clear no hands over at once, without waiting
+for the pixels to come right. After the last step Jev takes a quick look whether the task is done; a clear no hands
+over too. A run that finishes replaces the routine with the path that worked; a routine that broke twice in a row
+is not replayed again until the models finish the task once more.
 """
 
 import base64

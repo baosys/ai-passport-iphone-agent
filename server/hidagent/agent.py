@@ -12,7 +12,7 @@ import time
 from . import shortcuts, vision
 from .debug import Trace
 from .device import DeviceError
-from .jev import Jev
+from .jev import NO, SURE, Jev
 from .llm import LLM
 from .phone import Phone
 from .routines import Routines, asks, locate, look, patch, same, target
@@ -30,6 +30,7 @@ through home screens. Going to the home screen is one fast step too."""
 
 ACTOR_PROMPT = """You operate an iPhone through a mouse pointer and a hardware keyboard. You see the current screen.
 Reply in this format, nothing else:
+PAGE: <the app and page on screen, in a few words, e.g. "Settings > General" or "WeChat chat with Zhang San">
 THINK: <plain English a non-technical user understands: first check your last action against the
        screen (did it do what you intended?), then what you do now and why>
 DO: <action>
@@ -82,13 +83,15 @@ Actions:
   fail REASON
 
 Example:
+PAGE: Home screen
 THINK: My last action showed the home screen as intended. I open the App Store by name, which is faster than
 finding its icon.
 DO: open App Store"""
 
 # not part of the action
-META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_shot", "changed", "seen", "found")
-REMEMBERED = ("cue", "look")  # what a routine keeps about a step besides the action
+META = ("t", "thought", "thought_zh", "page", "think_s", "act_s", "settle_s", "shot", "_shot", "changed", "seen",
+        "found")
+REMEMBERED = ("cue", "look", "page")  # what a routine keeps about a step besides the action
 
 # action name -> argument names; numeric arguments are screen coordinates: 0-1000 inside the agent, screenshot
 # pixels when talking to the actor (most vision models answer in pixels whatever the prompt asks for)
@@ -144,13 +147,17 @@ def parse_command(line: str) -> dict:
 
 
 def parse_actions(text: str) -> list[dict]:
-    """Parse a THINK / DO… reply (an optional ZH line is kept); the thought goes on the first action."""
+    """Parse a [PAGE /] THINK / DO… reply (an optional ZH line is kept); the thought goes on the first action, the
+    page (what the actor saw on screen) on all of them."""
     thought = re.search(r"^\s*THINK\s*[:：]\s*(.*?)\s*$", text, re.M | re.I)
+    page = re.search(r"^\s*PAGE\s*[:：]\s*(.*?)\s*$", text, re.M | re.I)
     zh = re.search(r"^\s*ZH\s*[:：]\s*(.*?)\s*$", text, re.M | re.I)
     acts = [parse_command(line) for line in re.findall(r"^\s*DO\s*[:：]\s*(.*?)\s*$", text, re.M | re.I)][:6]
     if not acts:
         raise ValueError(f"no DO line in reply: {text[:200]}")
     acts[0] = {"thought": thought.group(1) if thought else "", "thought_zh": zh.group(1) if zh else "", **acts[0]}
+    if page and page.group(1):
+        acts = [{**a, "page": page.group(1)[:100]} for a in acts]
     return acts
 
 
@@ -326,30 +333,36 @@ class Agent:
             act = {k: v for k, v in step.items() if k not in REMEMBERED}
             frame, found = None, False
             if "cue" in step:
-                frame = await self._looks_like(step["cue"], target(act))
+                page = self._ask_page(step.get("page"))  # asked while the pixels are checked
+                try:
+                    frame = await self._looks_like(step["cue"], target(act), page)
+                    if (p := page and await page) is not None and p < NO:
+                        return self._resume(f"step {n + 1} of {len(steps)}: Jev sees another page than "
+                                            f"{step['page']!r}; the model takes over")
+                finally:
+                    if page:
+                        page.cancel()
                 if frame is None and (moved := await self._find_again(step, act)):
                     act, frame, found = *moved, True
                 if frame is None:
-                    self.routines.broke(routine["task"])
-                    self._record(action="resume", reason=f"step {n + 1} of {len(steps)} looks different from last "
-                                 "time; the model takes over")
-                    return False
+                    return self._resume(f"step {n + 1} of {len(steps)} looks different from last time; the model "
+                                        "takes over")
             started = time.time()
             await self._do(act)
             if found:
                 self._record(frame, **act, seen=True, found=True, act_s=round(time.time() - started, 2),
                              thought="Replay: the button had moved; Jev found it again, and its pixels match.",
-                             thought_zh="重放：按钮换了位置，Jev 重新找到了它，像素也对得上。")
+                             thought_zh="重放：按钮换了位置，Jev 重新找到了它，像素也对得上。", **_page(step))
             else:
                 self._record(frame, **act, seen=frame is not None, act_s=round(time.time() - started, 2),
                              thought="Replay: done the way that worked last time, without asking the model.",
-                             thought_zh="重放：照上次成功的做法，没有调用模型。")
+                             thought_zh="重放：照上次成功的做法，没有调用模型。", **_page(step))
             self._replayed.append(act)
             if path := _pointer_path(act):
                 self._pointer = path[-1]
             following = steps[n + 1]["action"] if n + 1 < len(steps) else None
             if following is None:
-                break  # the last step: nothing more to check, so no waiting for the screen
+                break  # the last step: nothing more to check before it
             if act["action"] == "key" and following == "type":
                 await self._settle(quiet=0.15, least=0.1, most=1.0)
             elif act["action"] not in ("type", "key") or following not in ("type", "key"):
@@ -357,18 +370,44 @@ class Agent:
         if self._asks:  # the answer has to be read off today's screen, once it is there
             await self._settle()
             return False
+        if self.jev.enabled:  # a quick look whether the steps did it; only a clear no hands over
+            await self._settle()
+            if (frame := self.screen.frame) and (p := await self.jev.done(frame, self.task)) is not None and p < NO:
+                return self._resume(f"all {len(steps)} steps ran, but Jev sees the task not done; the model takes "
+                                    "over")
         self.routines.replayed(routine["task"])
         self._record(action="done", answer=routine["answer"])
         return True
 
-    async def _looks_like(self, cue: list[int], at: tuple[float, float], tries: int = 3) -> bytes | None:
-        """The current frame if the spot about to be pressed looks as it did last time, waiting a little for it."""
+    def _resume(self, reason: str) -> bool:
+        """Stop replaying: the routine broke, and the models take over from the current screen."""
+        self.routines.broke(self._routine["task"])
+        self._record(action="resume", reason=reason)
+        return False
+
+    def _ask_page(self, page: str | None) -> asyncio.Task | None:
+        """Start asking Jev whether the screen shows `page` (the page a remembered step ran on)."""
+        if not page or not self.jev.enabled or not (frame := self.screen.frame):
+            return None
+        return asyncio.create_task(self.jev.page(frame, page))
+
+    async def _looks_like(self, cue: list[int], at: tuple[float, float], page: asyncio.Task | None = None,
+                          tries: int = 3) -> bytes | None:
+        """The current frame if the spot about to be pressed looks as it did last time, waiting a little for it.
+
+        `page`, Jev's answer whether this is the right page, cuts the wait short when it is a clear no.
+        """
         for attempt in range(tries):
             frame = self.screen.frame
             if frame and same(patch(frame, at), cue):
                 return frame
             if attempt < tries - 1:
-                await asyncio.sleep(0.5)
+                started = time.time()
+                if page is not None and not page.done():
+                    await asyncio.wait({page}, timeout=0.5)
+                if page is not None and page.done() and (p := page.result()) is not None and p < NO:
+                    return None
+                await asyncio.sleep(max(0.0, 0.5 - (time.time() - started)))
                 await self._settle()
         return None
 
@@ -399,13 +438,16 @@ class Agent:
                     act["cue"] = cue
                     if picture := look(self.shots[i], at):
                         act["look"] = picture
+                    act.update(_page(s))
             keep.append(act)
         # a reworded task that the models finished updates the routine it was matched to
         self.routines.learn(self._routine["task"] if self._routine else self.task, keep, last.get("answer", ""))
 
     async def _step(self) -> bool:
         """One see-think-act round (one or more actions). Returns True when the task is over."""
-        acts = await self._next_actions()
+        acts = await self._next_or_done()
+        if acts is None:
+            return True
         seen = acts[0]["_shot"]
         spots = [self._pointer]  # where the pointer was and goes: pointer moves are not screen changes
         stuck = self._repeating(acts[0])
@@ -437,6 +479,32 @@ class Agent:
         # feedback for the next round
         self._finish(acts, settle, changed=vision.changed(seen, self.screen.frame, ignore=tuple(spots)))
         return False
+
+    async def _next_or_done(self) -> list[dict] | None:
+        """The actor's next actions; None when Jev, asked meanwhile, is sure the last round finished the task.
+
+        Jev is asked only after a round that changed the screen, and never for a question, whose answer has to come
+        from the actor. Whichever answers first wins, so the check costs no time when it does not pay off.
+        """
+        frame = self.screen.frame
+        if not (self.jev.enabled and not self._asks and self.steps and self.steps[-1].get("changed") is True
+                and frame):
+            return await self._next_actions()
+        started = time.time()
+        actor = asyncio.create_task(self._next_actions())
+        jev = asyncio.create_task(self.jev.done(frame, self.task))
+        try:
+            finished, _ = await asyncio.wait({actor, jev}, return_when=asyncio.FIRST_COMPLETED)
+            if jev in finished and (p := jev.result()) is not None and p >= SURE:
+                actor.cancel()
+                self._record(frame, action="done", answer="", think_s=round(time.time() - started, 2),
+                             thought="Jev sees the task done on this screen, so the model was not asked again.",
+                             thought_zh="Jev 看屏幕判断任务已完成，没有再问模型。")
+                return None
+            return await actor
+        finally:
+            jev.cancel()
+            actor.cancel()
 
     async def _settle(self, **wait) -> float:
         started = time.time()
@@ -480,7 +548,8 @@ class Agent:
 
     async def _next_actions(self) -> list[dict]:
         # actions and their effect only: echoing earlier thoughts makes the model repeat them instead of looking
-        hidden = ("t", "plan", "plan_zh", "think_s", "act_s", "settle_s", "shot", "thought", "thought_zh", "changed")
+        hidden = ("t", "plan", "plan_zh", "think_s", "act_s", "settle_s", "shot", "thought", "thought_zh", "page",
+                  "changed")
         effect = {True: " -> screen changed", False: " -> screen did NOT change"}
         w, h = frame_size(self.screen.frame) or (1000, 1000)
         history = "\n".join(json.dumps(scale({k: v for k, v in s.items() if k not in hidden}, w / 1000, h / 1000))[:300]
@@ -519,6 +588,11 @@ class Agent:
             case "back": await self.phone.go_back()
             case "wait": pass
             case other: raise ValueError(f"unknown action {other!r}")
+
+
+def _page(step: dict) -> dict:
+    """The step's page description, as keyword arguments (none when it has no page)."""
+    return {"page": step["page"]} if step.get("page") else {}
 
 
 def _moved(act: dict, dx: int, dy: int) -> dict:

@@ -190,7 +190,7 @@ API：`GET /api/mirror`（状态和学到的点击位置），`POST /api/mirror`
 | `LLM_EXTRA_BODY` | `{}` | 合并进每次请求的 JSON（例如关闭模型的思考模式） |
 | `LLM_TOKEN_PARAM` | `auto` | 输出长度参数名：`max_tokens`、`max_completion_tokens`（新版 OpenAI 模型），或 `auto` 自动识别 |
 | `ACTOR_*` / `PLANNER_*` | — | 单独覆盖执行模型 / 规划模型的任意 `LLM_*` 配置 |
-| `TYPESAFE_API_KEY` | — | 可选。让 [Jev](https://typesafe.ai) 判断哪些步骤不用调用模型、把换了说法的任务对上记住的做法、找到换了位置的按钮 |
+| `TYPESAFE_API_KEY` | — | 可选。让 [Jev](https://typesafe.ai) 判断哪些步骤不用调用模型、把换了说法的任务对上记住的做法、找到换了位置的按钮、确认重放的步骤在对的页面上、看任务是否已经完成 |
 | `JEV_MODEL` / `JEV_VISION_MODEL` | `jev-latest` / `jev-preview` | Jev 处理文字和截图用的模型 |
 | `AIRPLAY_NAME` | `iPhone Agent` | 手机"屏幕镜像"列表里显示的名字 |
 | `PORT` / `DEVICE_PORT` | `8890` / `7300` | 网页端口 / 板子连接的端口 |
