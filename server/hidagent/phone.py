@@ -28,6 +28,10 @@ NUDGE = 12              # mouse units the pointer is wiggled by to find it on sc
 AIM_TOLERANCE = 0.008   # screen fraction; a bigger miss is corrected before pressing
 MAX_MISS = 0.06         # bigger misses are still corrected, but not learned from (they may be misreadings)
 EDGE_PUSH = 0.25        # screen fraction pushed past an edge so the pointer stops exactly on it
+# Targets below this (tab bars, toolbars) are reached from the bottom edge: the long move from the top corner gains
+# more than calibrated (a 0.943 aim landed at 0.907), while a short move up from the edge is exact.
+BOTTOM_ZONE = 0.85
+BOTTOM_EDGE = 0.995     # where the pointer stops when pushed down (its centre cannot reach the very edge)
 # Seconds from a nudge until the mirrored frame can show it. A Bluetooth board (AI Passport) adds radio latency on
 # top of AirPlay's, so the first new frame after a nudge often still shows the old pointer; wait this long first.
 POINTER_LAG = float(os.environ.get("HIDAGENT_POINTER_LAG", 0.35))
@@ -117,7 +121,15 @@ class Phone:
     async def point(self, x: float, y: float, aim: bool = False) -> None:
         if not self.calibrated:
             raise RuntimeError("pointer not calibrated")
-        await self._move_to(self._dx(x), self._dy(y))
+        if y >= BOTTOM_ZONE:
+            await self._move_to(self._dx(x), self._dy(BOTTOM_ZONE - 0.05))
+            await self.device.send(f"move 0 {round(EDGE_PUSH * self.span['h'])}")  # stops on the bottom edge
+            up = round((BOTTOM_EDGE - y) * self.span["h"])
+            await self.device.send(f"move 0 {-up}")
+            self._pos = (self._pos[0], self._dy(BOTTOM_EDGE) - up)  # a guess: the next move re-homes first
+            self._moves = REHOME_EVERY
+        else:
+            await self._move_to(self._dx(x), self._dy(y))
         if aim and self.screen is not None and self.screen.live:
             await self._aim(x, y)
 

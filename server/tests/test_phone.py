@@ -156,3 +156,12 @@ def test_tap_without_a_live_mirror_does_not_wait_for_the_pointer(tmp_path):
     phone.screen.live = False
     asyncio.run(phone.tap(0.5, 0.5))
     assert device.sent == ["release", "home", f"move {round(0.5 * 470)} {round(0.5 * 1024)}", "click"]
+
+
+def test_a_tap_near_the_bottom_goes_down_to_the_edge_then_a_short_way_up(tmp_path):
+    phone, device = make_phone(tmp_path, w=650, h=1430)
+    asyncio.run(phone.tap(0.874, 0.943, aim=False))
+    assert moves(device.sent) == [(round(0.874 * 650), round(0.8 * 1430)), (0, round(EDGE_PUSH * 1430)),
+                                  (0, -round((0.995 - 0.943) * 1430))]
+    asyncio.run(phone.tap(0.5, 0.5, aim=False))
+    assert device.sent[-3:] == ["home", f"move {round(0.5 * 650)} {round(0.5 * 1430)}", "click"]  # re-homed
