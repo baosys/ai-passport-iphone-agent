@@ -138,6 +138,7 @@ body.still .hand { animation: none; }
 .bar { display: flex; height: 4px; margin-top: 6px; background: var(--soft); border-radius: 2px; overflow: hidden; }
 .bar .think { background: var(--fg); }
 .bar .act { background: var(--muted); }
+.bar .settle { background: var(--muted); opacity: 0.4; }
 .card .times { color: var(--muted); font: 11px ui-monospace, monospace; margin-top: 3px; }
 
 dialog { border: 0; padding: 0; background: transparent; max-height: 92vh; }
