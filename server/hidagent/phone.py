@@ -33,7 +33,7 @@ EDGE_PUSH = 0.25        # screen fraction pushed past an edge so the pointer sto
 POINTER_LAG = float(os.environ.get("HIDAGENT_POINTER_LAG", 0.35))
 PASTE_SYNC = 0.5        # seconds for Universal Clipboard to offer a new copy to the phone before pasting
 HOME_SETTLE = 0.6       # seconds for the home screen to come up after cmd+h, before esc reaches it
-SEARCH_OPEN = 0.4       # seconds for the search field to open after cmd+space, when there is no mirror to watch
+SEARCH_ANIMATION = 0.5  # seconds for search to open or close when there is no mirror to watch
 PASTE_SPOTS = 60        # changed pixels that count as pasted text; a blinking cursor alone stays below
 
 
@@ -257,21 +257,32 @@ class Phone:
         await asyncio.sleep(HOME_SETTLE)
         for _ in range(2):
             await self.device.send("key esc")
+        await self._still()  # cmd+space while search is still closing is ignored
 
     async def open_app(self, name: str) -> None:
-        """Open an app through search: home, cmd+space, the name, then space and enter.
+        """Open an app through search: home, cmd+space, the name over any earlier query, then space and enter.
 
         With a Chinese input method the typed letters wait as a candidate; space takes the first one (with a plain
         layout it only adds a space, which search ignores), and enter opens the top result."""
         await self.go_home()
-        await self.device.send("key cmd+space")
-        if self.screen is not None and self.screen.live:
-            await self.screen.settled(quiet=0.15, least=0.1, most=1.0)
-        else:
-            await asyncio.sleep(SEARCH_OPEN)
+        for _ in range(2):  # once more if iOS ignored it
+            before = self.screen.frame if self.screen is not None else None
+            await self.device.send("key cmd+space")
+            await self._still()
+            if before is None or not self.screen.live or vision.changed(before, self.screen.frame):
+                break
+            log.info("open %s: search did not open; pressing cmd+space again", name)
+        await self.device.send("key cmd+a")  # search may come back with an earlier query: type over it
         await self.type(name)
         await self.device.send("key space")
         await self.device.send("key enter")
+
+    async def _still(self) -> None:
+        """Wait for an animation to end: until the mirror stops changing, or a fixed time without one."""
+        if self.screen is not None and self.screen.live:
+            await self.screen.settled(quiet=0.15, least=0.3, most=1.0)
+        else:
+            await asyncio.sleep(SEARCH_ANIMATION)
 
     async def go_back(self) -> None:
         """Swipe in from the left edge."""

@@ -32,6 +32,7 @@ def moves(lines):
 
 def test_home_is_cmd_h_then_esc_to_close_a_search_left_open(tmp_path, monkeypatch):
     monkeypatch.setattr(phone_module, "HOME_SETTLE", 0)
+    monkeypatch.setattr(phone_module, "SEARCH_ANIMATION", 0)
     phone, device = make_phone(tmp_path)
     asyncio.run(phone.go_home())
     assert device.sent == ["key cmd+h", "key esc", "key esc"]
@@ -39,11 +40,11 @@ def test_home_is_cmd_h_then_esc_to_close_a_search_left_open(tmp_path, monkeypatc
 
 def test_open_app_searches_from_home_and_takes_the_input_method_candidate(tmp_path, monkeypatch):
     monkeypatch.setattr(phone_module, "HOME_SETTLE", 0)
-    monkeypatch.setattr(phone_module, "SEARCH_OPEN", 0)
+    monkeypatch.setattr(phone_module, "SEARCH_ANIMATION", 0)
     phone, device = make_phone(tmp_path)
     asyncio.run(phone.open_app("Settings"))
-    assert device.sent == ["key cmd+h", "key esc", "key esc", "key cmd+space", "type Settings", "key space",
-                           "key enter"]
+    assert device.sent == ["key cmd+h", "key esc", "key esc", "key cmd+space", "key cmd+a", "type Settings",
+                           "key space", "key enter"]
 
 
 def test_back_swipe_starts_pinned_on_the_left_edge(tmp_path):
@@ -83,6 +84,16 @@ class FakeScreen:
 
     async def fresh(self, since, timeout=0.8):
         return b"after"
+
+
+def test_open_app_presses_cmd_space_again_when_search_did_not_open(tmp_path, monkeypatch):
+    monkeypatch.setattr(phone_module, "HOME_SETTLE", 0)
+    seen = iter([False, True])  # iOS ignores the first cmd+space while search is still closing
+    monkeypatch.setattr(vision, "changed", lambda *a, **k: next(seen))
+    phone, device = make_phone(tmp_path)
+    phone.screen = FakeScreen()
+    asyncio.run(phone.open_app("weixin"))
+    assert device.sent[3:] == ["key cmd+space", "key cmd+space", "key cmd+a", "type weixin", "key space", "key enter"]
 
 
 def test_ascii_text_is_typed_directly(tmp_path):
