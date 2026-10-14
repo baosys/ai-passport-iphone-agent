@@ -222,3 +222,53 @@ def test_round_timing_is_logged_and_kept_out_of_action_keys():
     assert "think_s" in first and all("act_s" in s for s in agent.steps)
     assert "settle_s" in last and last["changed"] is False  # the fake screen never changes
     assert _key(last) == {"action": "key", "combo": "enter"}
+
+
+@pytest.mark.parametrize(("task", "acts", "rest"), [
+    ("打开微信", [{"action": "open", "app": "微信"}], ""),
+    ("请帮我打开 App Store。", [{"action": "open", "app": "App Store"}], ""),
+    ("open Settings app", [{"action": "open", "app": "Settings"}], ""),
+    ("回到主屏幕", [{"action": "home"}], ""),
+    ("go home", [{"action": "home"}], ""),
+    ("打开微信，给张三发消息", [{"action": "open", "app": "微信"}], "给张三发消息"),
+    ("回到桌面然后打开设置", [{"action": "home"}, {"action": "open", "app": "设置"}], ""),
+    ("打开微信给张三发消息", [], "打开微信给张三发消息"),  # no clause boundary: too risky to guess the name
+    ("打开设置里的Wi-Fi", [], "打开设置里的Wi-Fi"),
+    ("给张三发消息，然后打开微信", [], "给张三发消息，然后打开微信"),  # only leading shortcuts run
+    ("open the authentication settings in Safari", [], "open the authentication settings in Safari"),
+])
+def test_shortcuts_split_the_task(task, acts, rest):
+    from hidagent.shortcuts import split
+
+    assert split(task) == (acts, rest)
+
+
+def test_search_term_types_hanzi_as_pinyin():
+    from hidagent.shortcuts import search_term
+
+    assert search_term("微信") == "weixin" and search_term("App Store") == "App Store"
+
+
+def test_shortcut_task_runs_without_any_model_and_without_a_screen():
+    import asyncio
+
+    from hidagent.agent import Agent
+    from hidagent.debug import Trace
+
+    class Screen:
+        live, frame = False, None
+
+    class Phone:
+        opened = []
+        async def open_app(self, name):
+            self.opened.append(name)
+
+    async def run():
+        agent = Agent(phone=Phone(), screen=Screen(), actor=None, planner=None, trace=Trace(None))
+        agent.start("打开微信")
+        await agent._job
+        return agent
+
+    agent = asyncio.run(run())
+    assert Phone.opened == ["weixin"]
+    assert [s["action"] for s in agent.steps] == ["open", "done"]

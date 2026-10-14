@@ -8,7 +8,7 @@ import math
 import re
 import time
 
-from . import vision
+from . import shortcuts, vision
 from .debug import Trace
 from .device import DeviceError
 from .llm import LLM
@@ -186,6 +186,7 @@ class Agent:
         self.shots: dict[int, bytes] = {}  # step index -> screenshot the model decided on
         self._pointer = (0.0, 0.0)  # last pointer position (screen fractions)
         self._job: asyncio.Task | None = None
+        self._quick: list[dict] = []  # leading actions of the task that need no model (see shortcuts.py)
 
     @property
     def running(self) -> bool:
@@ -194,9 +195,11 @@ class Agent:
     def start(self, task: str) -> None:
         if self.running:
             raise RuntimeError("agent already running")
-        if not self.screen.live:
+        quick, rest = shortcuts.split(task)
+        if rest and not self.screen.live:  # keyboard shortcuts alone work blind; the models need to see
             raise RuntimeError("no phone screen: start Screen Mirroring first")
         self.task, self.plan, self.steps, self.shots = task, "", [], {}
+        self._quick = quick
         self._pointer = (0.0, 0.0)
         self.trace.start(task)
         self._job = asyncio.create_task(self._run())
@@ -231,6 +234,8 @@ class Agent:
     async def _run(self) -> None:
         failures = 0
         try:
+            if await self._shortcuts():
+                return
             await self._replan()
             for _ in range(self.max_steps) if self.max_steps > 0 else itertools.count():
                 try:
@@ -253,6 +258,20 @@ class Agent:
             self._record(action="stopped")
         except Exception as e:  # e.g. the planner itself is unreachable
             self._record(action="error", reason=repr(e))
+
+    async def _shortcuts(self) -> bool:
+        """Run the task's shortcut actions without asking a model. Returns True when they were the whole task."""
+        for act in self._quick:
+            started = time.time()
+            await self._do(act)
+            self._record(**act, thought="Shortcut: done by keyboard without asking the model.",
+                         thought_zh="快捷操作：直接用键盘完成，没有调用模型。", act_s=round(time.time() - started, 2))
+        if not self._quick or shortcuts.split(self.task)[1]:
+            if self._quick and self.screen.live:
+                await self._settle()  # let the app come up before the planner looks
+            return False
+        self._record(action="done", answer="")
+        return True
 
     async def _step(self) -> bool:
         """One see-think-act round (one or more actions). Returns True when the task is over."""
@@ -318,6 +337,8 @@ class Agent:
 
     async def _replan(self, stuck: bool = False) -> None:
         prompt = f"Goal: {self.task}"
+        if self._quick:
+            prompt += "\nAlready done: " + ", ".join(" ".join(map(str, a.values())) for a in self._quick)
         if stuck:
             last = self.steps[-1] if self.steps else {}
             prompt += (f"\n\nThe previous plan got stuck (last event: {last.get('action')} {last.get('reason', '')}):"
@@ -363,7 +384,7 @@ class Agent:
             case "circle": await self.phone.drag(circle(p("x"), p("y"), p("r"), self.screen.aspect))
             case "type": await self.phone.type(a["text"])
             case "key": await self.phone.key(a["combo"])
-            case "open": await self.phone.open_app(a["app"])
+            case "open": await self.phone.open_app(shortcuts.search_term(a["app"]))
             case "home": await self.phone.go_home()
             case "back": await self.phone.go_back()
             case "wait": pass
