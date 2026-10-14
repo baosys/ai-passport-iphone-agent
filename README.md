@@ -181,6 +181,8 @@ Set in `server/.env` (see [`.env.example`](server/.env.example)):
 | `HIDAGENT_DATA` | `~/.hidagent` | Calibration and debug traces |
 | `HIDAGENT_DEBUG` | `0` | Debug mode, see below |
 | `HIDAGENT_POINTER_LAG` | `0.35` | Seconds to wait after nudging the pointer before looking for it on the mirrored screen (Bluetooth adds latency) |
+| `HIDAGENT_MAX_STEPS` | `100` | Most actions per task before the agent gives up; `0` runs until the task is done, fails, or you stop it |
+| `HIDAGENT_PASTE` | on with `pbcopy` (macOS) | `0` turns off pasting Chinese through Universal Clipboard; pinyin typing is used instead |
 
 ### Local model (optional)
 
@@ -248,14 +250,17 @@ server/     agent, web UI, screen capture and board link (Python, FastAPI)
 
 - [ ] Test a fully local setup with DiffusionGemma (`server/serve/` has an experimental OpenAI-compatible server)
 - [ ] Landscape apps (screen coordinates and calibration assume portrait)
-- [ ] Non-ASCII text input (e.g. Chinese through the iOS pinyin keyboard)
+- [x] Chinese text input (Universal Clipboard paste, pinyin as the fallback)
 - [ ] More example tasks across popular apps
 
 ## Limitations
 
 - iOS does not mirror some screens (passcode entry, Apple Pay, DRM video); the agent cannot see them.
 - Mirroring stops when the phone locks; keep auto-lock off while the agent works.
-- Keyboard input is ASCII only.
+- The board types ASCII only. Chinese is pasted through Universal Clipboard (macOS; the Mac and iPhone need the
+  same Apple ID with Handoff on) or, when nothing was pasted, typed as pinyin, which needs the iOS Chinese Pinyin
+  keyboard to be active and picks the first candidate. With Universal Clipboard off, the phone pastes whatever its
+  own clipboard holds; set `HIDAGENT_PASTE=0` then. Emoji and other characters without a key are skipped.
 - Re-calibrate after changing AssistiveTouch tracking speed.
 - Landscape apps are not supported yet: drawings and taps there land in the wrong place.
 - On Linux machines with several network interfaces, limit Avahi (mDNS) to the interface on the phone's network

@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import hidagent.phone as phone_module
+from hidagent import textinput, vision
 from hidagent.phone import EDGE_PUSH, Phone
 
 
@@ -65,3 +67,55 @@ def test_release_follows_press_even_when_the_swipe_fails(tmp_path):
     except RuntimeError:
         pass
     assert device.sent[-1] == "release"
+
+
+class FakeScreen:
+    """A live mirror whose frame is whatever `vision.changed` is told to report."""
+
+    live, frame = True, b"frame"
+
+    async def settled(self, **_):
+        pass
+
+
+def test_ascii_text_is_typed_directly(tmp_path):
+    phone, device = make_phone(tmp_path)
+    asyncio.run(phone.type("hello"))
+    assert device.sent == ["type hello"]
+
+
+def test_chinese_is_typed_as_pinyin_without_a_clipboard(tmp_path, monkeypatch):
+    monkeypatch.setenv("HIDAGENT_PASTE", "0")
+    phone, device = make_phone(tmp_path)
+    asyncio.run(phone.type("你好，世界"))
+    assert device.sent == ["type nihao", "key space", "type ,", "type shijie", "key space"]
+
+
+def test_chinese_is_pasted_when_the_clipboard_works(tmp_path, monkeypatch):
+    phone, device = make_phone(tmp_path)
+    phone.screen = FakeScreen()
+    copied = []
+
+    async def copy(text):
+        copied.append(text)
+        return True
+
+    monkeypatch.setattr(textinput, "copy", copy)
+    monkeypatch.setattr(phone_module, "PASTE_SYNC", 0)
+    monkeypatch.setattr(vision, "changed", lambda *a, **k: True)
+    asyncio.run(phone.type("郭兴华"))
+    assert copied == ["郭兴华"] and device.sent == ["key cmd+v"]
+
+
+def test_pinyin_follows_a_paste_that_changed_nothing(tmp_path, monkeypatch):
+    phone, device = make_phone(tmp_path)
+    phone.screen = FakeScreen()
+
+    async def copy(text):
+        return True
+
+    monkeypatch.setattr(textinput, "copy", copy)
+    monkeypatch.setattr(phone_module, "PASTE_SYNC", 0)
+    monkeypatch.setattr(vision, "changed", lambda *a, **k: False)
+    asyncio.run(phone.type("郭兴华"))
+    assert device.sent == ["key cmd+v", "type guoxinghua", "key space"]

@@ -14,7 +14,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from . import vision
+from . import textinput, vision
 from .device import Device
 
 log = logging.getLogger(__name__)
@@ -31,6 +31,8 @@ EDGE_PUSH = 0.25        # screen fraction pushed past an edge so the pointer sto
 # Seconds from a nudge until the mirrored frame can show it. A Bluetooth board (AI Passport) adds radio latency on
 # top of AirPlay's, so the first new frame after a nudge often still shows the old pointer; wait this long first.
 POINTER_LAG = float(os.environ.get("HIDAGENT_POINTER_LAG", 0.35))
+PASTE_SYNC = 0.5        # seconds for Universal Clipboard to offer a new copy to the phone before pasting
+PASTE_SPOTS = 60        # changed pixels that count as pasted text; a blinking cursor alone stays below
 
 
 class Phone:
@@ -210,7 +212,32 @@ class Phone:
         await self.device.send(f"scroll {lines} 0")
 
     async def type(self, text: str) -> None:
-        await self.device.send(f"type {text}")
+        """ASCII goes straight to the keyboard. Anything else (Chinese) is pasted from this computer's clipboard,
+        or typed as pinyin when there is no clipboard or the paste changed nothing on screen."""
+        if text.isascii():
+            await self.device.send(f"type {text}")
+            return
+        if await self._paste(text):
+            return
+        for line in textinput.pinyin_lines(text):
+            await self.device.send(line)
+
+    async def _paste(self, text: str) -> bool:
+        if not await textinput.copy(text):
+            return False
+        if self.screen is None or not self.screen.live:  # cannot check: trust the paste
+            await asyncio.sleep(PASTE_SYNC)
+            await self.device.send("key cmd+v")
+            return True
+        await self.screen.settled(quiet=0.2, least=0.1, most=1.0)
+        before = self.screen.frame
+        await asyncio.sleep(PASTE_SYNC)
+        await self.device.send("key cmd+v")
+        await self.screen.settled(quiet=0.4, least=0.6, most=3.0)  # a paste from the Mac can take a second
+        if vision.changed(before, self.screen.frame, spots=PASTE_SPOTS):
+            return True
+        log.info("paste changed nothing on screen; typing pinyin instead")
+        return False
 
     async def key(self, combo: str) -> None:
         await self.device.send(f"key {combo}")

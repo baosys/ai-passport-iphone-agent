@@ -25,7 +25,8 @@ device = Device()
 screen = Screen(os.environ.get("AIRPLAY_NAME", "iPhone Agent"))
 phone = Phone(device, DATA_DIR / "calibration.json", screen)
 agent = Agent(phone, screen, LLM.from_env("ACTOR"), LLM.from_env("PLANNER"),
-              Trace(DATA_DIR / "traces" if DEBUG else None))
+              Trace(DATA_DIR / "traces" if DEBUG else None),
+              max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)))
 
 
 @asynccontextmanager

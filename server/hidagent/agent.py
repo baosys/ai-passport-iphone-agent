@@ -1,6 +1,7 @@
 """See-think-act loop: a planner model writes the plan, an actor model picks each step."""
 
 import asyncio
+import itertools
 import json
 import logging
 import math
@@ -38,7 +39,10 @@ Aim at the visual center of the element you want, not its edge or its label.
 Look before you act: describe what is really on the screen now, not what you expect.
 Each recent action says whether the screen changed after it. If it did NOT change, the action
 missed or had no effect: do not assume it worked; aim again more precisely or try another way.
-Only type when a text field is visibly focused (the keyboard is showing).
+The board is also a hardware keyboard, so the on-screen keyboard never appears. A text field is focused
+when it shows a blinking cursor (or is highlighted); then type into it. Keys on the on-screen keyboard
+(Send, Search, Go, Done) are therefore missing: press them with key enter. To send a chat message
+(WeChat, Messages, ...), type it and then key enter; do not look for a send button.
 Swipes have no momentum: content moves exactly as far as the finger and stops. Prefer short swipes
 (100-250 units) and check the result; repeat if needed rather than one big swipe.
 Time or number wheels (e.g. an alarm's time): first tap the number in the wheel's center row and type
@@ -55,7 +59,7 @@ Actions:
   swipe X1 Y1 X2 Y2         (finger moves from X1,Y1 to X2,Y2: "swipe down" means Y2 > Y1)
   path X1 Y1 X2 Y2 X3 Y3 …  (one continuous stroke through 2-20 points, for drawing)
   circle X Y R              (draw a circle centered at X Y; R is the radius in x units)
-  type TEXT                 (ASCII only; tap the input field first)
+  type TEXT                 (any text, Chinese too; tap the input field first and check the result)
   key COMBO                 (enter, backspace, esc, cmd+a, ...)
   home | back | wait
   replan                    (the plan no longer fits the screen)
@@ -125,7 +129,7 @@ class BlindError(RuntimeError):
 
 class Agent:
     def __init__(self, phone: Phone, screen: Screen, actor: LLM, planner: LLM, trace: Trace,
-                 max_steps: int = 40, max_failures: int = 3):
+                 max_steps: int = 100, max_failures: int = 3):  # max_steps 0: until done, fail or stop
         self.phone, self.screen, self.actor, self.planner = phone, screen, actor, planner
         self.trace = trace
         self.max_steps, self.max_failures = max_steps, max_failures
@@ -179,7 +183,7 @@ class Agent:
         failures = 0
         try:
             await self._replan()
-            for _ in range(self.max_steps):
+            for _ in range(self.max_steps) if self.max_steps > 0 else itertools.count():
                 try:
                     if await self._step():
                         return

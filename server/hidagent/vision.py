@@ -9,11 +9,13 @@ def _gray(jpeg: bytes) -> Image.Image:
     return Image.open(io.BytesIO(jpeg)).convert("L")
 
 
-def changed(before: bytes | None, after: bytes | None, ignore: tuple = (), threshold: float = 1.0) -> bool:
+def changed(before: bytes | None, after: bytes | None, ignore: tuple = (), threshold: float = 1.0,
+            spots: int = 6) -> bool:
     """True when the screen content changed, including small things such as a checkmark.
 
     `ignore` lists screen points (fractions) where the pointer was or went: those spots are masked, so pointer
-    moves never count. The status bar (clock) is ignored too.
+    moves never count. The status bar (clock) is ignored too. `spots` is how many changed pixels (at half
+    resolution) count as a change; raise it to ignore a blinking text cursor.
     """
     if not before or not after:
         return True
@@ -32,7 +34,7 @@ def changed(before: bytes | None, after: bytes | None, ignore: tuple = (), thres
             x, y = i % w, i // w
             if y > 0.06 * h and all((x - mx) ** 2 + (y - my) ** 2 > (0.05 * w) ** 2 for mx, my in masks):
                 hits += 1
-    return hits >= 6
+    return hits >= spots
 
 
 def pointer(before: bytes, after: bytes, near: tuple[float, float], shift: float,
