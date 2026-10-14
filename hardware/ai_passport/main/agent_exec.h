@@ -29,7 +29,7 @@ typedef struct {
 } agent_hid_ops_t;
 
 typedef struct {
-    int step;                // 每个报告最大位移(单位:鼠标计数)
+    int step;                // 每个报告最大合成位移(单位:鼠标计数),各方向速度一致
     uint32_t interval_ms;    // 报告间隔,恒定节拍
     int home_reports;        // home 时 (-127,-127) 报告数,足以把指针推到左上角
     uint32_t click_ms;       // click 按下到抬起

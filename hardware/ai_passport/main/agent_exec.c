@@ -57,14 +57,25 @@ static void pace(agent_exec_t *ex, uint32_t ms)
     ex->ops.sleep_ms(ex->ops.ctx, ms > ex->cfg.interval_ms ? ms : ex->cfg.interval_ms);
 }
 
-// 以恒定节拍分步移动:iOS 的指针加速取决于速度,节拍恒定,服务器的标定才可复用。
+// d 的 i/n,四舍五入;逐步取差,累计正好是 d。
+static long share(long d, long i, long n)
+{
+    return (2 * d * i + (d < 0 ? -n : n)) / (2 * n);
+}
+
+// 以恒定速度沿直线分步移动:iOS 的指针加速取决于速度,所以按合成位移(而非每轴)限制每个报告,
+// 任何方向的速度都相同,服务器的一次标定才对所有方向都成立。
 static bool move_paced(agent_exec_t *ex, long dx, long dy)
 {
-    while (dx || dy) {
-        int sx = clamp(dx, ex->cfg.step), sy = clamp(dy, ex->cfg.step);
-        if (!mouse(ex, sx, sy, 0, 0)) return false;
-        dx -= sx;
-        dy -= sy;
+    const long step = ex->cfg.step, len2 = dx * dx + dy * dy;
+    long n = (labs(dx) > labs(dy) ? labs(dx) : labs(dy)) / step;
+    while (n * n * step * step < len2) n++;  // 最少步数,使每步合成位移不超过 step
+    long px = 0, py = 0;
+    for (long i = 1; i <= n; i++) {
+        long x = share(dx, i, n), y = share(dy, i, n);
+        if (!mouse(ex, (int)(x - px), (int)(y - py), 0, 0)) return false;
+        px = x;
+        py = y;
         pace(ex, 0);
     }
     return true;

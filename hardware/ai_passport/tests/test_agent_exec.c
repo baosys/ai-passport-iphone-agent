@@ -138,12 +138,33 @@ static void test_ping_and_errors(void)
 static void test_move_is_paced(void)
 {
     reset();
-    assert(run("move 25 -3"));
+    assert(run("move 25 -3"));  // split evenly along the line, not 10 per axis then the rest
     assert(s_fake.mouse_count == 3);
-    assert((int8_t)s_fake.mouse[0][1] == 10 && (int8_t)s_fake.mouse[0][2] == -3);
-    assert((int8_t)s_fake.mouse[1][1] == 10 && (int8_t)s_fake.mouse[1][2] == 0);
-    assert((int8_t)s_fake.mouse[2][1] == 5 && (int8_t)s_fake.mouse[2][2] == 0);
+    assert((int8_t)s_fake.mouse[0][1] == 8 && (int8_t)s_fake.mouse[0][2] == -1);
+    assert((int8_t)s_fake.mouse[1][1] == 9 && (int8_t)s_fake.mouse[1][2] == -1);
+    assert((int8_t)s_fake.mouse[2][1] == 8 && (int8_t)s_fake.mouse[2][2] == -1);
     assert(s_fake.slept_ms == 3 * 15);
+
+    // A diagonal is no faster than a straight move: every report stays within the step length, so iOS
+    // pointer acceleration (which depends on speed) is the same in every direction.
+    const long moves[][2] = { { 100, 100 }, { 0, 137 }, { -227, 836 }, { 300, -40 }, { 7, 0 } };
+    for (size_t m = 0; m < sizeof(moves) / sizeof(moves[0]); m++) {
+        char cmd[32];
+        snprintf(cmd, sizeof(cmd), "move %ld %ld", moves[m][0], moves[m][1]);
+        reset();
+        assert(run(cmd));
+        long sx = 0, sy = 0;
+        for (int i = 0; i < s_fake.mouse_count; i++) {
+            int x = (int8_t)s_fake.mouse[i][1], y = (int8_t)s_fake.mouse[i][2];
+            assert(x <= 10 && x >= -10 && y <= 10 && y >= -10);  // never past the step on an axis (int8-safe)
+            assert(x * x + y * y <= 11 * 11);  // the step length, plus rounding
+            sx += x;
+            sy += y;
+        }
+        assert(sx == moves[m][0] && sy == moves[m][1]);
+    }
+    reset();
+    assert(run("move 100 100") && s_fake.mouse_count == 15);  // 141 units at 10 per report
 
     reset();
     assert(run("move 0 0") && s_fake.mouse_count == 0);
