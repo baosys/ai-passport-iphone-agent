@@ -2,6 +2,8 @@
 
 "打开微信" runs as one keyboard sequence, with no planner or actor call. A compound task such as
 "打开微信，给张三发消息" opens the app the same way and leaves the rest to the models.
+
+With Jev on (see jev.py), Jev decides what each clause asks for, and these patterns only read the app's name.
 """
 
 import re
@@ -28,12 +30,19 @@ def search_term(name: str) -> str:
     return "".join(lazy_pinyin(name.strip())).strip()
 
 
-def _clause(text: str) -> dict | None:
+def clauses(task: str) -> list[str]:
+    return [c for c in SPLIT.split(task.strip()) if c]
+
+
+def parse(text: str, kind: str | None = None) -> dict | None:
+    """The shortcut action for one clause, or None. `kind` is Jev's reading of it (a key of jev.KINDS)."""
     text = text.strip().rstrip("。.!！")
-    if HOME.match(text):
+    if HOME.match(text) if kind is None else kind == "home":
         return {"action": "home"}
-    if BACK.match(text):
+    if BACK.match(text) if kind is None else kind == "back":
         return {"action": "back"}
+    if kind not in (None, "open"):
+        return None
     m = OPEN.match(text)
     app = m.group("app").strip(" “”\"'") if m else ""
     if app and len(app) <= 24 and sum(map(_hanzi, app)) <= MAX_HANZI and not NOT_A_NAME.search(app):
@@ -46,7 +55,7 @@ def split(task: str) -> tuple[list[dict], str]:
     acts, rest = [], task.strip()
     while rest:
         head, *tail = SPLIT.split(rest, maxsplit=1)
-        act = _clause(head)
+        act = parse(head)
         if act is None:
             break
         acts.append(act)

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from .agent import Agent
 from .debug import Trace
 from .device import Device, DeviceError
+from .jev import Jev
 from .llm import LLM
 from .mirror import Mirror
 from .phone import Phone
@@ -29,7 +30,8 @@ screen = Screen(AIRPLAY_NAME, state=DATA_DIR / "receiver.json")
 phone = Phone(device, DATA_DIR / "calibration.json", screen)
 agent = Agent(phone, screen, LLM.from_env("ACTOR"), LLM.from_env("PLANNER"),
               Trace(DATA_DIR / "traces" if DEBUG else None),
-              max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)), routines=Routines(DATA_DIR / "routines.json"))
+              max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)), routines=Routines(DATA_DIR / "routines.json"),
+              jev=Jev.from_env())
 mirror = Mirror(phone, screen, agent.actor, DATA_DIR / "mirror.json", AIRPLAY_NAME, busy=lambda: agent.running)
 
 
@@ -101,7 +103,7 @@ def index():
 def status():
     return {"device": device.connected, "screen": screen.live, "calibrated": phone.calibrated,
             "debug": DEBUG, "trace": str(agent.trace.dir or ""), "aspect": round(screen.aspect, 4),
-            "models": {"planner": agent.planner.model, "actor": agent.actor.model},
+            "models": {"planner": agent.planner.model, "actor": agent.actor.model, "jev": agent.jev.enabled},
             "agent": {"running": agent.running, "task": agent.task, "steps": agent.steps},
             "mirror": mirror.status()}
 

@@ -209,6 +209,8 @@ Set in `server/.env` (see [`.env.example`](server/.env.example)):
 | `LLM_EXTRA_BODY` | `{}` | JSON merged into every request (e.g. to turn off a model's thinking mode) |
 | `LLM_TOKEN_PARAM` | `auto` | Token-limit field: `max_tokens`, `max_completion_tokens` (newer OpenAI models), or `auto` to detect |
 | `ACTOR_*` / `PLANNER_*` | — | Per-role overrides of any `LLM_*` variable |
+| `TYPESAFE_API_KEY` | — | Optional. Lets [Jev](https://typesafe.ai) decide which steps need no model, match reworded tasks to remembered ones, and find a remembered button that moved |
+| `JEV_MODEL` / `JEV_VISION_MODEL` | `jev-latest` / `jev-preview` | Jev models for text and for screenshots |
 | `AIRPLAY_NAME` | `iPhone Agent` | Receiver name in the phone's Screen Mirroring list |
 | `PORT` / `DEVICE_PORT` | `8890` / `7300` | Web UI port / port the board connects to |
 | `HIDAGENT_DATA` | `~/.hidagent` | Calibration and debug traces |

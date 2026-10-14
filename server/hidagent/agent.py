@@ -1,6 +1,7 @@
 """See-think-act loop: a planner model writes the plan, an actor model picks each step."""
 
 import asyncio
+import base64
 import itertools
 import json
 import logging
@@ -11,9 +12,10 @@ import time
 from . import shortcuts, vision
 from .debug import Trace
 from .device import DeviceError
+from .jev import Jev
 from .llm import LLM
 from .phone import Phone
-from .routines import Routines, asks, patch, same, target
+from .routines import Routines, asks, locate, look, patch, same, target
 from .screen import Screen, frame_size
 
 log = logging.getLogger(__name__)
@@ -85,7 +87,8 @@ finding its icon.
 DO: open App Store"""
 
 # not part of the action
-META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_shot", "changed", "seen")
+META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_shot", "changed", "seen", "found")
+REMEMBERED = ("cue", "look")  # what a routine keeps about a step besides the action
 
 # action name -> argument names; numeric arguments are screen coordinates: 0-1000 inside the agent, screenshot
 # pixels when talking to the actor (most vision models answer in pixels whatever the prompt asks for)
@@ -180,9 +183,10 @@ class BlindError(RuntimeError):
 class Agent:
     def __init__(self, phone: Phone, screen: Screen, actor: LLM, planner: LLM, trace: Trace,
                  max_steps: int = 100, max_failures: int = 3,  # max_steps 0: until done, fail or stop
-                 routines: Routines | None = None):
+                 routines: Routines | None = None, jev: Jev | None = None):
         self.phone, self.screen, self.actor, self.planner = phone, screen, actor, planner
         self.routines = routines or Routines(None)
+        self.jev = jev or Jev(None)
         self.trace = trace
         self.max_steps, self.max_failures = max_steps, max_failures
         self.task, self.plan, self.steps = "", "", []
@@ -191,6 +195,9 @@ class Agent:
         self._job: asyncio.Task | None = None
         self._quick: list[dict] = []  # leading actions of the task that need no model (see shortcuts.py)
         self._replayed: list[dict] = []  # actions replayed from a remembered routine (see routines.py)
+        self._rest = ""  # the part of the task the shortcuts leave to the models
+        self._routine: dict | None = None  # the remembered routine this task means
+        self._asks = False  # the task wants an answer read off the screen
 
     @property
     def running(self) -> bool:
@@ -203,7 +210,8 @@ class Agent:
         if rest and not self.screen.live:  # keyboard shortcuts alone work blind; the models need to see
             raise RuntimeError("no phone screen: start Screen Mirroring first")
         self.task, self.plan, self.steps, self.shots = task, "", [], {}
-        self._quick, self._replayed = quick, []
+        self._quick, self._replayed, self._rest = quick, [], rest
+        self._routine, self._asks = self.routines.find(task), asks(task)
         self._pointer = (0.0, 0.0)
         self.trace.start(task)
         self._job = asyncio.create_task(self._run())
@@ -238,6 +246,7 @@ class Agent:
     async def _run(self) -> None:
         failures = 0
         try:
+            await self._triage()
             if await self._shortcuts() or await self._replay():
                 return
             await self._replan()
@@ -264,6 +273,31 @@ class Agent:
         except Exception as e:  # e.g. the planner itself is unreachable
             self._record(action="error", reason=repr(e))
 
+    async def _triage(self) -> None:
+        """Let Jev decide what needs no model: shortcut clauses, a routine remembered under other words, and
+        whether the task asks a question. Without Jev the regex reading made in start() stands."""
+        if not self.jev.enabled:
+            return
+        clauses = shortcuts.clauses(self.task)
+        remembered = [] if self._routine else self.routines.tasks()
+        started = time.time()
+        t = await self.jev.triage(self.task, clauses, remembered)
+        if t is None:
+            return
+        quick = []
+        for clause, kind in zip(clauses, t.kinds, strict=False):  # clauses past MAX_CLAUSES: "other"
+            if (act := shortcuts.parse(clause, kind)) is None:
+                break
+            quick.append(act)
+        self._quick, self._asks = quick, t.asks
+        self._rest = "" if len(quick) == len(clauses) else "，".join(clauses[len(quick):])
+        if self._routine is None and t.routine:
+            self._routine = self.routines.find(t.routine)
+        if self._rest and not self.screen.live:
+            raise BlindError("no phone screen: start Screen Mirroring first")
+        log.info("agent: jev triage in %.2fs: %s, rest %r, routine %r", time.time() - started, quick, self._rest,
+                 self._routine and self._routine["task"])
+
     async def _shortcuts(self) -> bool:
         """Run the task's shortcut actions without asking a model. Returns True when they were the whole task."""
         for act in self._quick:
@@ -271,7 +305,7 @@ class Agent:
             await self._do(act)
             self._record(**act, thought="Shortcut: done by keyboard without asking the model.",
                          thought_zh="快捷操作：直接用键盘完成，没有调用模型。", act_s=round(time.time() - started, 2))
-        if not self._quick or shortcuts.split(self.task)[1]:
+        if not self._quick or self._rest:
             if self._quick and self.screen.live:
                 await self._settle()  # let the app come up before the planner looks
             return False
@@ -284,25 +318,32 @@ class Agent:
         Returns True when the replay finished the task; False when there is none, when the screen differs from
         last time (the models take over from there), or when the task asks a question that needs a fresh look.
         """
-        routine = self.routines.find(self.task)
+        routine = self._routine
         if routine is None:
             return False
         steps = routine["steps"]
         for n, step in enumerate(steps):
-            act = {k: v for k, v in step.items() if k != "cue"}
-            frame = None
+            act = {k: v for k, v in step.items() if k not in REMEMBERED}
+            frame, found = None, False
             if "cue" in step:
                 frame = await self._looks_like(step["cue"], target(act))
+                if frame is None and (moved := await self._find_again(step, act)):
+                    act, frame, found = *moved, True
                 if frame is None:
-                    self.routines.broke(self.task)
+                    self.routines.broke(routine["task"])
                     self._record(action="resume", reason=f"step {n + 1} of {len(steps)} looks different from last "
                                  "time; the model takes over")
                     return False
             started = time.time()
             await self._do(act)
-            self._record(frame, **act, seen=frame is not None, act_s=round(time.time() - started, 2),
-                         thought="Replay: done the way that worked last time, without asking the model.",
-                         thought_zh="重放：照上次成功的做法，没有调用模型。")
+            if found:
+                self._record(frame, **act, seen=True, found=True, act_s=round(time.time() - started, 2),
+                             thought="Replay: the button had moved; Jev found it again, and its pixels match.",
+                             thought_zh="重放：按钮换了位置，Jev 重新找到了它，像素也对得上。")
+            else:
+                self._record(frame, **act, seen=frame is not None, act_s=round(time.time() - started, 2),
+                             thought="Replay: done the way that worked last time, without asking the model.",
+                             thought_zh="重放：照上次成功的做法，没有调用模型。")
             self._replayed.append(act)
             if path := _pointer_path(act):
                 self._pointer = path[-1]
@@ -313,10 +354,10 @@ class Agent:
                 await self._settle(quiet=0.15, least=0.1, most=1.0)
             elif act["action"] not in ("type", "key") or following not in ("type", "key"):
                 await self._settle()
-        if asks(self.task):  # the answer has to be read off today's screen, once it is there
+        if self._asks:  # the answer has to be read off today's screen, once it is there
             await self._settle()
             return False
-        self.routines.replayed(self.task)
+        self.routines.replayed(routine["task"])
         self._record(action="done", answer=routine["answer"])
         return True
 
@@ -330,6 +371,16 @@ class Agent:
                 await asyncio.sleep(0.5)
                 await self._settle()
         return None
+
+    async def _find_again(self, step: dict, act: dict) -> tuple[dict, bytes] | None:
+        """The action moved to where Jev finds the remembered control now, if the pixels there match last time."""
+        if not self.jev.enabled or "look" not in step or not (frame := self.screen.frame):
+            return None
+        box = await self.jev.find(frame, base64.b64decode(step["look"]))
+        old = target(act)
+        if box is None or (spot := locate(frame, step["cue"], box, old[0])) is None:
+            return None
+        return _moved(act, round((spot[0] - old[0]) * 1000), round((spot[1] - old[1]) * 1000)), frame
 
     def _learn(self) -> None:
         """Remember how a finished task was done, for replaying it next time."""
@@ -346,8 +397,11 @@ class Agent:
             if at and ("think_s" in s or s.get("seen")) and i in self.shots:  # the shot was taken right before it
                 if (cue := patch(self.shots[i], at)) is not None:
                     act["cue"] = cue
+                    if picture := look(self.shots[i], at):
+                        act["look"] = picture
             keep.append(act)
-        self.routines.learn(self.task, keep, last.get("answer", ""))
+        # a reworded task that the models finished updates the routine it was matched to
+        self.routines.learn(self._routine["task"] if self._routine else self.task, keep, last.get("answer", ""))
 
     async def _step(self) -> bool:
         """One see-think-act round (one or more actions). Returns True when the task is over."""
@@ -465,6 +519,18 @@ class Agent:
             case "back": await self.phone.go_back()
             case "wait": pass
             case other: raise ValueError(f"unknown action {other!r}")
+
+
+def _moved(act: dict, dx: int, dy: int) -> dict:
+    """The pointer action shifted by (dx, dy) in 0-1000 screen units."""
+    act = dict(act)
+    if act["action"] in ("tap", "circle"):
+        act["x"], act["y"] = act["x"] + dx, act["y"] + dy
+    elif act["action"] == "swipe":
+        act.update(x1=act["x1"] + dx, y1=act["y1"] + dy, x2=act["x2"] + dx, y2=act["y2"] + dy)
+    elif act["action"] == "path":
+        act["points"] = [[x + dx, y + dy] for x, y in act["points"]]
+    return act
 
 
 def _pointer_path(act: dict) -> list[tuple[float, float]]:

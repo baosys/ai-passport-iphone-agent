@@ -2,11 +2,14 @@
 
 Before each remembered tap or swipe, the replay checks that the spot it is about to press still looks the way it
 did last time (a small patch of the screen around it, not the whole screen, so a new chat or badge elsewhere does
-not matter). When it does not, the replay stops and the models take over from there. A run that finishes
+not matter). When it does not, Jev (jev.py) may find the button elsewhere, from a picture of it kept from last time;
+the replay presses it there only if the pixels there match too. Otherwise the replay stops and the models take
+over from there. A run that finishes
 replaces the routine with the path that worked; a routine that broke twice in a row is not replayed again until
 the models finish the task once more.
 """
 
+import base64
 import io
 import json
 import logging
@@ -54,12 +57,23 @@ def target(act: dict) -> tuple[float, float] | None:
     return None
 
 
-def patch(jpeg: bytes, at: tuple[float, float]) -> list[int] | None:
-    """A small grey patch of the screen around `at`."""
+LOOK_PX = 300  # side of the picture of a pressed control kept for Jev to find it again
+
+
+def _grey(jpeg: bytes) -> Image.Image | None:
     try:
-        img = Image.open(io.BytesIO(jpeg)).convert("L")
+        return Image.open(io.BytesIO(jpeg)).convert("L")
     except Exception:
         return None
+
+
+def patch(jpeg: bytes, at: tuple[float, float]) -> list[int] | None:
+    """A small grey patch of the screen around `at`."""
+    img = _grey(jpeg)
+    return None if img is None else _patch(img, at)
+
+
+def _patch(img: Image.Image, at: tuple[float, float]) -> list[int] | None:
     w, h = img.size
     rx, ry = PATCH[0] * w, PATCH[1] * w
     box = (round(at[0] * w - rx), round(at[1] * h - ry), round(at[0] * w + rx), round(at[1] * h + ry))
@@ -69,11 +83,47 @@ def patch(jpeg: bytes, at: tuple[float, float]) -> list[int] | None:
     return list(img.crop(box).resize(PATCH_PX, Image.BILINEAR).tobytes())
 
 
-def same(a: list[int] | None, b: list[int] | None) -> bool:
+def changed(a: list[int] | None, b: list[int] | None) -> float:
+    """The share of the patch's pixels that differ (1.0 when the patches cannot be compared)."""
     if a is None or b is None or len(a) != len(b):
-        return False
+        return 1.0
     diff = ImageChops.difference(Image.frombytes("L", PATCH_PX, bytes(a)), Image.frombytes("L", PATCH_PX, bytes(b)))
-    return sum(d >= CHANGED for d in diff.tobytes()) / len(a) < SAME
+    return sum(d >= CHANGED for d in diff.tobytes()) / len(a)
+
+
+def same(a: list[int] | None, b: list[int] | None) -> bool:
+    return changed(a, b) < SAME
+
+
+def look(jpeg: bytes, at: tuple[float, float]) -> str | None:
+    """A picture (base64 JPEG) of the screen around `at`, for Jev to find the same control on another screen."""
+    try:
+        img = Image.open(io.BytesIO(jpeg)).convert("RGB")
+    except Exception:
+        return None
+    w, h = img.size
+    side = min(LOOK_PX, w, h)
+    x0 = min(max(round(at[0] * w - side / 2), 0), w - side)
+    y0 = min(max(round(at[1] * h - side / 2), 0), h - side)
+    out = io.BytesIO()
+    img.crop((x0, y0, x0 + side, y0 + side)).save(out, "JPEG", quality=80)
+    return base64.b64encode(out.getvalue()).decode()
+
+
+def locate(jpeg: bytes, cue: list[int], box: tuple[float, float, float, float],
+           x: float) -> tuple[float, float] | None:
+    """Where in `box` (fractions) the screen shows `cue`, searched across the box's height at `x` and its centre."""
+    img = _grey(jpeg)
+    if img is None:
+        return None
+    h = img.size[1]
+    left, top, right, bottom = box
+    margin = PATCH[1] * img.size[0] / h  # the cue can sit a little past a tight box
+    step = 2 / h
+    ys = [top - margin + i * step for i in range(int((bottom - top + 2 * margin) / step) + 1)]
+    best = min(((changed(_patch(img, (cx, cy)), cue), cx, cy) for cx in {x, (left + right) / 2} for cy in ys
+                if 0 <= cy <= 1), default=(1.0, 0, 0))
+    return (best[1], best[2]) if best[0] < SAME else None
 
 
 class Routines:
@@ -85,6 +135,10 @@ class Routines:
                 self.data = json.loads(path.read_text())
             except (OSError, ValueError) as e:
                 log.warning("could not read %s: %s", path, e)
+
+    def tasks(self) -> list[str]:
+        """The tasks that can be replayed, most used first."""
+        return [r["task"] for r in sorted(self.data.values(), key=lambda r: -r["ok"]) if r["fails"] < MAX_FAILS]
 
     def find(self, task: str) -> dict | None:
         routine = self.data.get(normalize(task))
