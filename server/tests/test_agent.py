@@ -1,8 +1,9 @@
 import math
+import re
 
 import pytest
 
-from hidagent.agent import circle, parse_actions, parse_command, parse_plan
+from hidagent.agent import KEY_NAMES, circle, parse_actions, parse_command, parse_plan
 
 
 def test_parse_single_action():
@@ -129,3 +130,90 @@ def test_actor_speaks_screenshot_pixels_and_the_agent_keeps_0_to_1000():
     assert '"x1": 250, "y1": 864, "x2": 250, "y2": 432' in actor.prompt  # history in the actor's pixels
     assert (tap["x"], tap["y"]) == (500, 831)
     assert (ring["x"], ring["y"], ring["r"]) == (500, 500, 200)  # radius stays a share of the width
+
+
+def test_parse_open_app_by_search():
+    acts = parse_actions("THINK: Open Notes through search.\nDO: key cmd+space\nDO: type Notes\nDO: key enter")
+    assert [(a["action"], a.get("combo", a.get("text"))) for a in acts] == [
+        ("key", "cmd+space"), ("type", "Notes"), ("key", "enter")]
+
+
+@pytest.mark.parametrize(("line", "combo"), [
+    ("key Cmd + Space", "cmd+space"), ("key cmd+H", "cmd+h"), ("key return", "enter"), ("key Escape", "esc"),
+    ('key "shift+tab"', "shift+tab"), ("key command+option+left arrow", "cmd+alt+left"), ("key ⌘+a", "cmd+a"),
+])
+def test_parse_normalizes_key_combos(line, combo):
+    assert parse_command(line) == {"action": "key", "combo": combo}
+
+
+@pytest.mark.parametrize("line", ["key", "key cmd+", "key home", "key enter enter", "key 返回"])
+def test_parse_rejects_unknown_keys(line):
+    with pytest.raises(ValueError):
+        parse_command(line)
+
+
+def _firmware_key_names() -> tuple[set[str], set[str]]:
+    from pathlib import Path
+
+    hw = Path(__file__).resolve().parents[2] / "hardware"
+    passport = set(re.findall(r'\{\s*"(\w+)"', (hw / "ai_passport/main/agent_keymap.c").read_text()))
+    bridge = set(re.findall(r'k == "(\w+)"', (hw / "hid_bridge/hid_bridge.ino").read_text()))
+    return passport, bridge
+
+
+def test_key_names_exist_in_both_firmwares():
+    passport, bridge = _firmware_key_names()
+    assert KEY_NAMES <= passport
+    assert KEY_NAMES - {"delete"} <= bridge
+
+
+def test_prompt_keys_work_on_both_boards():
+    from hidagent.agent import ACTOR_PROMPT, PLANNER_PROMPT
+
+    passport, bridge = _firmware_key_names()
+    combos = re.findall(r"\bkey ([a-z]+(?:\+[a-z]+)*)", ACTOR_PROMPT + PLANNER_PROMPT)
+    combos += re.findall(r"\b((?:cmd|shift|ctrl|alt)\+[a-z]+)", ACTOR_PROMPT + PLANNER_PROMPT)
+    assert "cmd+space" in combos and "cmd+h" in combos and "shift+tab" in combos
+    for combo in combos:
+        for token in combo.split("+"):
+            assert len(token) == 1 or (token in passport and token in bridge), combo
+
+
+def test_round_timing_is_logged_and_kept_out_of_action_keys():
+    import asyncio
+    import io
+
+    from PIL import Image
+
+    from hidagent.agent import Agent, _key
+    from hidagent.debug import Trace
+
+    jpeg = io.BytesIO()
+    Image.new("RGB", (46, 100)).save(jpeg, "JPEG")
+
+    class Screen:
+        live, frame, aspect = True, jpeg.getvalue(), 0.46
+        async def settled(self, **wait):
+            pass
+
+    class Phone:
+        def __init__(self):
+            self.sent = []
+        async def key(self, combo):
+            self.sent.append(("key", combo))
+        async def type(self, text):
+            self.sent.append(("type", text))
+
+    class Actor:
+        model = "fake"
+        async def chat(self, system, text, image=None, max_tokens=600, temperature=0):
+            return "THINK: open Notes\nDO: key cmd+space\nDO: type Notes\nDO: key enter"
+
+    phone = Phone()
+    agent = Agent(phone=phone, screen=Screen(), actor=Actor(), planner=None, trace=Trace(None))
+    assert asyncio.run(agent._step()) is False
+    assert phone.sent == [("key", "cmd+space"), ("type", "Notes"), ("key", "enter")]
+    first, last = agent.steps[0], agent.steps[-1]
+    assert "think_s" in first and all("act_s" in s for s in agent.steps)
+    assert "settle_s" in last and last["changed"] is False  # the fake screen never changes
+    assert _key(last) == {"action": "key", "combo": "enter"}

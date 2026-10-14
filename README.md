@@ -50,7 +50,9 @@ uses the same paths a person uses — the screen and a pointer — so the phone 
   `click`, `type`, …); all logic stays on the computer.
 - **Brain — a planner and an actor.** A planner model writes a short plan from the goal and the current screen.
   An actor model then looks at each new screenshot and picks the next action: tap, swipe, draw a path, type, press
-  a key, go home, or finish. Both roles can be the same model.
+  a key, go home, or finish. Both roles can be the same model. Where iOS has a keyboard shortcut, the agent uses it
+  instead of a tap, since a key press needs no pointer travel or aiming: <kbd>⌘</kbd><kbd>Space</kbd> and the app
+  name to open an app, <kbd>⌘</kbd><kbd>H</kbd> for the home screen, typing straight into a focused field.
 - **Closing the loop.** The pointer is relative, so the server tracks where it is. Before each tap it wiggles the
   pointer, finds it on the mirrored screen and corrects any miss, refining the calibration as it goes. After each
   action it checks whether the screen actually changed and tells the model, so a missed tap is noticed and retried
@@ -111,6 +113,9 @@ Open `http://<computer-ip>:8890` in a browser. The first start takes a few minut
 1. **Settings → Accessibility → Touch → AssistiveTouch**: turn it on.
 2. **Settings → Bluetooth**: tap **AI Passport** under *Other Devices* and confirm. The Passport screen shows
    *Connected* and a round pointer appears on the phone.
+3. Optional: **Settings → Accessibility → Keyboards → Full Keyboard Access**: turn it on to let the agent move
+   between buttons with <kbd>Tab</kbd> and the arrow keys and press them with <kbd>Space</kbd>, which is faster than
+   tapping.
 
 ### 4. Connect the Passport to the computer
 
@@ -155,7 +160,7 @@ Plug the board into the phone instead of steps 3 and 4; it connects to the serve
 - **Live phone** — click to tap, drag to swipe, scroll to scroll; manual Home, Back, typing and keys.
 - **Live log** — every plan, thought and action as it happens, with timings.
 - **Step wall** — the screenshot the model decided on for every step, with its tap or swipe drawn on top, plus the
-  model's reasoning and how long thinking and acting took. Click a card to zoom in.
+  model's reasoning and how long thinking, acting and waiting for the screen to settle took. Click a card to zoom in.
 - **Taps** are marked with a red ring and a spreading ripple, swipes and strokes with a yellow path; the **Motion** switch
   turns the animation off. Every tap finds the pointer on screen and corrects it before pressing.
 - **Emergency stop** (or <kbd>Esc</kbd>) stops the agent and releases the pointer. **Clear history** empties the log.

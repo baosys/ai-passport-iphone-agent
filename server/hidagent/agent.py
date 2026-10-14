@@ -21,10 +21,11 @@ PLANNER_PROMPT = """You plan tasks on an iPhone. Given the goal and the current 
 write a short numbered plan (at most 6 steps) of what to do on screen. Plain text only, in English.
 Plan only what the goal needs, from what you can see; never invent accounts, emails, logins or
 screens you have not seen. Later steps can stay general (e.g. "Draw the face on the canvas").
-To open an app, prefer search over paging through home screens: tap the "Search" pill above
-the dock (or swipe down from the middle of the home screen), type the app name, tap the result."""
+The phone has a hardware keyboard, and keys are much faster than taps: plan with them where they work.
+To open an app, use search, never page through home screens: press cmd+space, type the app name, press enter.
+To go to the home screen, press cmd+h."""
 
-ACTOR_PROMPT = """You operate an iPhone through a mouse pointer. You see the current screen.
+ACTOR_PROMPT = """You operate an iPhone through a mouse pointer and a hardware keyboard. You see the current screen.
 Reply in this format, nothing else:
 THINK: <plain English a non-technical user understands: first check your last action against the
        screen (did it do what you intended?), then what you do now and why>
@@ -39,10 +40,18 @@ Aim at the visual center of the element you want, not its edge or its label.
 Look before you act: describe what is really on the screen now, not what you expect.
 Each recent action says whether the screen changed after it. If it did NOT change, the action
 missed or had no effect: do not assume it worked; aim again more precisely or try another way.
-The board is also a hardware keyboard, so the on-screen keyboard never appears. A text field is focused
-when it shows a blinking cursor (or is highlighted); then type into it. Keys on the on-screen keyboard
-(Send, Search, Go, Done) are therefore missing: press them with key enter. To send a chat message
-(WeChat, Messages, ...), type it and then key enter; do not look for a send button.
+Keys are fast: no pointer travel, no aiming. A tap costs a few seconds. Whenever keys reach the same result,
+use them instead of taps:
+- Open any app: key cmd+space, type its name, key enter (three DO lines; enter opens the top result).
+- Go to the home screen: key cmd+h. Use home (a slower swipe) only if cmd+h changed nothing.
+- A focused text field (blinking cursor, or highlighted) takes typing directly: do not tap it first.
+- key esc closes search, menus and many alerts; check the result.
+- Full Keyboard Access: if a colored focus ring outlines one item, the user turned it on (Settings ->
+  Accessibility -> Keyboards). Then key tab / shift+tab moves the ring to the next / previous item, arrow keys
+  move it within a group, and key space activates the ringed item. Use it when the target is a move or two
+  from the ring. With no ring, or when key tab changed nothing, it is off: tap instead.
+The on-screen keyboard never appears, so its keys (Send, Search, Go, Done) are missing: press them with
+key enter. To send a chat message (WeChat, Messages, ...), type it and then key enter; do not look for a send button.
 Swipes have no momentum: content moves exactly as far as the finger and stops. Prefer short swipes
 (a tenth to a quarter of the screen height) and check the result; repeat if needed rather than one big swipe.
 Time or number wheels (e.g. an alarm's time): first tap the number in the wheel's center row and type
@@ -58,18 +67,23 @@ Actions:
   swipe X1 Y1 X2 Y2         (finger moves from X1,Y1 to X2,Y2: "swipe down" means Y2 > Y1)
   path X1 Y1 X2 Y2 X3 Y3 …  (one continuous stroke through 2-20 points, for drawing)
   circle X Y R              (draw a circle centered at X Y; R is the radius in pixels)
-  type TEXT                 (any text, Chinese too; tap the input field first and check the result)
-  key COMBO                 (enter, backspace, esc, cmd+a, ...)
-  home | back | wait
+  type TEXT                 (any text, Chinese too, into the focused field; if no field is focused, tap it first)
+  key COMBO                 (one of: enter esc backspace tab space up down left right, or a combo
+                             joined with +: cmd+space, cmd+h, cmd+a, shift+tab)
+  home | back | wait        (home and back are pointer swipes; prefer key cmd+h for home)
   replan                    (the plan no longer fits the screen)
   done ANSWER               (the goal is reached; ANSWER is the result for the user)
   fail REASON
 
 Example:
-THINK: My last tap opened the home screen as intended. The App Store icon is visible, so I tap it.
-DO: tap 152 362"""
+THINK: My last action showed the home screen as intended. I open the App Store through search, which is faster
+than finding its icon.
+DO: key cmd+space
+DO: type App Store
+DO: key enter"""
 
-META = ("t", "thought", "thought_zh", "think_s", "act_s", "shot", "_shot", "changed")  # not part of the action
+# not part of the action
+META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_shot", "changed")
 
 # action name -> argument names; numeric arguments are screen coordinates: 0-1000 inside the agent, screenshot
 # pixels when talking to the actor (most vision models answer in pixels whatever the prompt asks for)
@@ -77,6 +91,27 @@ ACTIONS = {"tap": ("x", "y"), "swipe": ("x1", "y1", "x2", "y2"), "circle": ("x",
            "type": ("text",), "key": ("combo",), "done": ("answer",), "fail": ("reason",),
            "home": (), "back": (), "wait": (), "replan": ()}
 TEXT_ARGS = ("text", "combo", "answer", "reason")
+
+# key names both boards know (hardware/ai_passport/main/agent_keymap.c, hardware/hid_bridge/hid_bridge.ino);
+# a single printable ASCII character (h, a, 1, ...) also works. "delete" is AI Passport only.
+KEY_NAMES = frozenset({"cmd", "ctrl", "alt", "shift", "enter", "esc", "tab", "backspace", "delete", "space",
+                       "up", "down", "left", "right"})
+KEY_ALIASES = {"return": "enter", "escape": "esc", "command": "cmd", "⌘": "cmd", "control": "ctrl",
+               "option": "alt", "opt": "alt", "⌥": "alt", "⇧": "shift", "spacebar": "space",
+               "uparrow": "up", "downarrow": "down", "leftarrow": "left", "rightarrow": "right",
+               "arrowup": "up", "arrowdown": "down", "arrowleft": "left", "arrowright": "right"}
+
+
+def parse_combo(text: str) -> str:
+    """Normalize a key combo for the board, e.g. "Cmd + Space" -> "cmd+space"; unknown keys raise ValueError."""
+    keys = []
+    for token in text.strip().strip('"').lower().split("+"):
+        token = re.sub(r"\s+", "", token)
+        token = KEY_ALIASES.get(token, token)
+        if token not in KEY_NAMES and not (len(token) == 1 and " " < token < "\x7f"):
+            raise ValueError(f"unknown key {token!r} in: {text[:100]}")
+        keys.append(token)
+    return "+".join(keys)
 
 
 def parse_command(line: str) -> dict:
@@ -86,6 +121,8 @@ def parse_command(line: str) -> dict:
     if name not in ACTIONS:
         raise ValueError(f"unknown action: {line[:100]}")
     keys = ACTIONS[name]
+    if name == "key":
+        return {"action": name, "combo": parse_combo(rest)}
     if keys and keys[0] in TEXT_ARGS:
         return {"action": name, keys[0]: rest.strip().strip('"')}
     numbers = [int(float(n)) for n in re.findall(r"-?\d+(?:\.\d+)?", rest)]
@@ -222,6 +259,7 @@ class Agent:
         seen = acts[0]["_shot"]
         spots = [self._pointer]  # where the pointer was and goes: pointer moves are not screen changes
         stuck = self._repeating(acts[0])
+        settle = 0.0  # seconds spent waiting for the screen, on top of the model's think_s and each act_s
         for i, act in enumerate(acts):
             name = act["action"]
             if name == "replan" or stuck:
@@ -239,14 +277,30 @@ class Agent:
                 return True
             following = acts[i + 1]["action"] if i < len(acts) - 1 else None
             if name == "tap" and following in ("type", "key"):  # typing into a field that a missed tap never opened
-                await self.screen.settled()
+                settle += await self._settle()
                 if not vision.changed(seen, self.screen.frame, ignore=tuple(spots)):
-                    self.steps[-1]["changed"] = False
+                    self._finish(acts[:i + 1], settle, changed=False)
                     return False  # skip the rest; the actor looks again
-        await self.screen.settled()
+            elif name == "key" and following == "type":  # e.g. cmd+space: let the search field open before typing
+                settle += await self._settle(quiet=0.15, least=0.1, most=1.0)
+        settle += await self._settle()
         # feedback for the next round
-        self.steps[-1]["changed"] = vision.changed(seen, self.screen.frame, ignore=tuple(spots))
+        self._finish(acts, settle, changed=vision.changed(seen, self.screen.frame, ignore=tuple(spots)))
         return False
+
+    async def _settle(self, **wait) -> float:
+        started = time.time()
+        await self.screen.settled(**wait)
+        return time.time() - started
+
+    def _finish(self, acts: list[dict], settle: float, changed: bool) -> None:
+        """Note the round's settle time and screen change on its last step, and log where the time went."""
+        self.steps[-1].update(settle_s=round(settle, 2), changed=changed)
+        think, act = acts[0].get("think_s", 0), sum(a.get("act_s", 0) for a in acts)
+        log.info("agent: round of %d (%s): think %.2fs, act %.2fs, settle %.2fs, total %.2fs, changed=%s",
+                 len(acts), " ".join(a["action"] for a in acts), think, act, settle, think + act + settle, changed)
+        self.trace.write(kind="timing", actions=[a["action"] for a in acts], think_s=think, act_s=round(act, 2),
+                         settle_s=round(settle, 2), changed=changed)
 
     def _missed(self) -> bool:
         """The previous round changed nothing on screen, so a tap may have landed off target."""
@@ -274,7 +328,7 @@ class Agent:
 
     async def _next_actions(self) -> list[dict]:
         # actions and their effect only: echoing earlier thoughts makes the model repeat them instead of looking
-        hidden = ("t", "plan", "plan_zh", "think_s", "act_s", "shot", "thought", "thought_zh", "changed")
+        hidden = ("t", "plan", "plan_zh", "think_s", "act_s", "settle_s", "shot", "thought", "thought_zh", "changed")
         effect = {True: " -> screen changed", False: " -> screen did NOT change"}
         w, h = frame_size(self.screen.frame) or (1000, 1000)
         history = "\n".join(json.dumps(scale({k: v for k, v in s.items() if k not in hidden}, w / 1000, h / 1000))[:300]

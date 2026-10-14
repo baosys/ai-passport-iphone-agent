@@ -58,7 +58,9 @@ const what = (s) => describeStep(s)[lang === "zh" ? 1 : 0];
 // the model answers in English; a Chinese version is shown when it gives one
 const why = (s) => (lang === "zh" && s.thought_zh) || s.thought || s.answer || s.reason || "";
 const planText = (s) => (lang === "zh" && s.plan_zh) || s.plan || "";
-const times = (s) => [s.think_s != null && `${t("thinking")} ${fmt(s.think_s)}`, s.act_s != null && `${t("doing")} ${fmt(s.act_s)}`].filter(Boolean).join(" · ");
+const times = (s) => [s.think_s != null && `${t("thinking")} ${fmt(s.think_s)}`, s.act_s != null && `${t("doing")} ${fmt(s.act_s)}`,
+  s.settle_s != null && `${t("settling")} ${fmt(s.settle_s)}`].filter(Boolean).join(" · ");
+const spent = (s) => (s.think_s || 0) + (s.act_s || 0) + (s.settle_s || 0);
 const where = (s) => ({
   tap: () => ` (${s.x}, ${s.y})${s.precise ? " · precise" : ""}`, swipe: () => ` (${s.x1}, ${s.y1}) → (${s.x2}, ${s.y2})`,
   path: () => ` · ${s.points.length} pts`, circle: () => ` (${s.x}, ${s.y}) r=${s.r}`,
@@ -138,12 +140,13 @@ function card(s, index, number, scale, runId) {
   const body = el("div", "body");
   body.append(el("div", "no", isPlan(s) ? t("planner") : lang === "zh" ? `第 ${number} 步` : `${t("step")} ${number}`),
     el("div", "what", what(s)), el("div", "why", isPlan(s) ? "" : why(s)));
-  if (s.think_s != null) {
+  if (s.think_s != null || s.act_s != null) {
     const bar = el("div", "bar");
-    const a = el("div", "think"), b = el("div", "act");
-    a.style.width = `${(s.think_s / scale) * 100}%`;
+    const a = el("div", "think"), b = el("div", "act"), c = el("div", "settle");
+    a.style.width = `${((s.think_s || 0) / scale) * 100}%`;
     b.style.width = `${((s.act_s || 0) / scale) * 100}%`;
-    bar.append(a, b);
+    c.style.width = `${((s.settle_s || 0) / scale) * 100}%`;
+    bar.append(a, b, c);
     body.append(bar, el("div", "times", times(s)));
   }
   c.append(body);
@@ -274,7 +277,7 @@ async function poll() {
     $("st-state").textContent = t(a.running ? "working" : state || "idle");
     $("st-steps").textContent = actions.length;
     $("st-time").textContent = steps.length ? fmt(end - steps[0].t) : "0s";
-    $("st-step").textContent = actions.length ? fmt(actions.reduce((n, x) => n + (x.think_s || 0) + x.act_s, 0) / actions.length) : "–";
+    $("st-step").textContent = actions.length ? fmt(actions.reduce((n, x) => n + spent(x), 0) / actions.length) : "–";
 
     const key = lang + JSON.stringify(steps);
     if (key !== shown) {
@@ -288,7 +291,7 @@ async function poll() {
       $("log").replaceChildren(...steps.map(logLine));
       if (stick) logBox.scrollTop = logBox.scrollHeight;  // follow the newest line
 
-      const scale = Math.max(1, ...steps.map((x) => (x.think_s || 0) + (x.act_s || 0)));
+      const scale = Math.max(1, ...steps.map(spent));
       const runId = steps.length ? steps[0].t : "";
       let n = 0;
       const cards = steps.map((x, i) => card(x, i, isPlan(x) ? n : ++n, scale, runId));
