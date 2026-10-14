@@ -41,11 +41,14 @@ SEARCH_ANIMATION = 0.5  # seconds for search to open or close when there is no m
 PASTE_SPOTS = 60        # changed pixels that count as pasted text; a blinking cursor alone stays below
 PASTE_RETRY = 600       # seconds without trying to paste after a paste changed nothing (no Universal Clipboard)
 PRESS_SETTLE = 0.08     # seconds between pressing and moving, so iOS sees a touch before it moves, not a tap
+RELAY_LOAD = 8.0        # seconds for Safari to load the relay page
+RELAY_COPY = 3.0        # seconds for the page to report its copy after the tap
 
 
 class Phone:
-    def __init__(self, device: Device, calibration_file: Path, screen=None):
-        self.device, self._file, self.screen = device, calibration_file, screen
+    def __init__(self, device: Device, calibration_file: Path, screen=None, relay=None):
+        self.device, self._file, self.screen, self.relay = device, calibration_file, screen, relay
+        self.last_tap: tuple[float, float] | None = None  # the field being typed into, usually
         # mouse units needed to cross the full screen width / height
         saved = json.loads(calibration_file.read_text()) if calibration_file.exists() else None
         self.span = {"w": saved["w"], "h": saved["h"]} if saved else None
@@ -207,6 +210,7 @@ class Phone:
         """
         await self.point(x, y, aim)
         await self.device.send("click")
+        self.last_tap = (x, y)
         await asyncio.sleep(TAP_GAP)
 
     async def swipe(self, x1: float, y1: float, x2: float, y2: float, hold: bool = True) -> None:
@@ -234,13 +238,17 @@ class Phone:
         await self.device.send(f"scroll {lines} 0")
 
     async def type(self, text: str) -> None:
-        """ASCII goes straight to the keyboard. Anything else (Chinese) is pasted from this computer's clipboard,
-        or typed as pinyin when there is no clipboard or the paste changed nothing on screen."""
+        """ASCII goes straight to the keyboard. Anything else (Chinese) is pasted exactly: from this computer's
+        clipboard (Universal Clipboard), else copied in Safari from a page this server offers (relay.py). Pinyin,
+        which may pick wrong homophones, is the last resort."""
         if text.isascii():
             await self.device.send(f"type {text}")
             return
-        if await self._paste(text):
+        if await self._paste(text) or await self._relay(text):
             return
+        await self._pinyin(text)
+
+    async def _pinyin(self, text: str) -> None:
         for line in textinput.pinyin_lines(text):
             await self.device.send(line)
 
@@ -260,9 +268,60 @@ class Phone:
         await self.screen.settled(quiet=0.4, least=0.6, most=3.0)  # a paste from the Mac can take a second
         if vision.changed(before, self.screen.frame, spots=PASTE_SPOTS):
             return True
-        log.info("paste changed nothing on screen; typing pinyin instead (no paste for %d s)", PASTE_RETRY)
+        log.info("paste changed nothing on screen; no Universal Clipboard for %d s", PASTE_RETRY)
         self._no_paste = time.time()
         return False
+
+    async def _relay(self, text: str) -> bool:
+        """Copy `text` in Safari from the relay page, come back to the app (the field keeps its focus) and paste.
+
+        Needs the mirror to check the paste. False when the page or the copy did not work: the caller types
+        pinyin instead, wherever the phone is then, so the relay always ends back in the app it started from."""
+        if self.relay is None or self.screen is None or not self.screen.live:
+            return False
+        url = self.relay.offer(text)
+        if url is None:
+            return False
+        field = self.last_tap
+        await self.open_app("Safari")
+        await self.device.send("key cmd+l")
+        await self._still()
+        await self.device.send(f"type {url}")  # digits and signs: the pinyin keyboard leaves them in the address bar
+        await self.device.send("key enter")
+        copied = False
+        try:
+            await asyncio.wait_for(self.relay.loaded.wait(), RELAY_LOAD)
+            await self.screen.settled(quiet=0.2, least=0.4, most=2.0)
+            for _ in range(2):  # the whole page is the copy button
+                await self.tap(0.5, 0.45)
+                try:
+                    await asyncio.wait_for(self.relay.copied.wait(), RELAY_COPY)
+                    copied = True
+                    break
+                except asyncio.TimeoutError:
+                    log.info("relay: no copy after the tap")
+        except asyncio.TimeoutError:
+            log.info("relay: Safari did not load %s", url)
+        await self.previous_app()
+        await self.screen.settled(quiet=0.3, least=0.5, most=2.0)
+        if not copied:
+            return False
+        for attempt in range(2):
+            if attempt:  # the field lost its focus on the way: tap it again
+                if field is None:
+                    break
+                await self.tap(*field)
+            before = self.screen.frame
+            await self.device.send("key cmd+v")
+            await self.screen.settled(quiet=0.3, least=0.3, most=2.0)
+            if vision.changed(before, self.screen.frame, spots=PASTE_SPOTS):
+                return True
+            log.info("relay: the paste changed nothing")
+        return False
+
+    async def previous_app(self) -> None:
+        """Swipe right along the bottom edge: back to the app used before this one."""
+        await self.swipe(0.25, BOTTOM_EDGE, 0.9, BOTTOM_EDGE)
 
     async def key(self, combo: str) -> None:
         await self.device.send(f"key {combo}")
@@ -294,7 +353,10 @@ class Phone:
                 break
             log.info("open %s: search did not open; pressing cmd+space again", name)
         await self.device.send("key cmd+a")  # search may come back with an earlier query: type over it
-        await self.type(name)
+        if name.isascii():
+            await self.device.send(f"type {name}")
+        else:  # an app name is short and common: pinyin finds it, and pasting it would open search again
+            await self._pinyin(name)
         if name.isascii():
             await self.device.send("key space")
         await self.device.send("key enter")

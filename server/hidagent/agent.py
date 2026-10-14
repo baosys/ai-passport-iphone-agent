@@ -66,9 +66,8 @@ The on-screen keyboard never appears, so its keys (Send, Search, Go, Done) are m
 key enter. To send a chat message (WeChat, Messages, ...), type it and then key enter; do not look for a send button.
 Type the whole message in ONE type action on one line (separate points with ；or ; — a line break would send it
 early), composed from your notes. After key enter, check that it shows as a sent bubble in the chat.
-Chinese may be typed through the pinyin keyboard, which takes the first candidate: write plain, common words that
-cannot be misread as a homophone (下雨 or 小雨, not 有雨), numbers in words where a sign has no key (18到32度,
-not 18–32°), and check the text in the field before key enter.
+Chinese text is pasted exactly, any length: the phone briefly opens Safari to copy it and comes back to the
+field by itself. Tap the field first, type, then check the text in the field before key enter.
 An app opens where it was left: an open sheet or detail page means the app is already open; close it (its X or
 back) instead of opening the app again.
 Swipes have no momentum: content moves exactly as far as the finger and stops. Prefer short swipes

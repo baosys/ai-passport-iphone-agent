@@ -5,8 +5,8 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -17,6 +17,7 @@ from .jev import Jev
 from .llm import LLM
 from .mirror import Mirror
 from .phone import Phone
+from .relay import Relay
 from .routines import Routines
 from .screen import Screen
 
@@ -27,7 +28,7 @@ DEBUG = os.environ.get("HIDAGENT_DEBUG") == "1"
 device = Device()
 AIRPLAY_NAME = os.environ.get("AIRPLAY_NAME", "iPhone Agent")
 screen = Screen(AIRPLAY_NAME, state=DATA_DIR / "receiver.json")
-phone = Phone(device, DATA_DIR / "calibration.json", screen)
+phone = Phone(device, DATA_DIR / "calibration.json", screen, relay=Relay(int(os.environ.get("PORT", 8890))))
 agent = Agent(phone, screen, LLM.from_env("ACTOR"), LLM.from_env("PLANNER"),
               Trace(DATA_DIR / "traces" if DEBUG else None),
               max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)), routines=Routines(DATA_DIR / "routines.json"),
@@ -259,4 +260,20 @@ def agent_clear():
         agent.clear()
     except RuntimeError as e:
         raise HTTPException(409, str(e)) from e
+    return {"ok": True}
+
+
+@app.get("/{code}")
+def relay_page(code: str):
+    """The one-time page the phone opens in Safari to copy text it cannot type (relay.py)."""
+    page = phone.relay.page(code) if code.isdigit() else None
+    if page is None:
+        raise HTTPException(404)
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/{code}/copied")
+async def relay_copied(code: str, request: Request):
+    if not phone.relay.done(code, (await request.body()) == b"1"):
+        raise HTTPException(404)
     return {"ok": True}

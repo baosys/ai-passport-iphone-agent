@@ -184,3 +184,49 @@ def test_a_tap_near_the_bottom_goes_down_to_the_edge_then_a_short_way_up(tmp_pat
                                   (0, -round((0.995 - 0.943) * 1430))]
     asyncio.run(phone.tap(0.5, 0.5, aim=False))
     assert device.sent[-3:] == ["home", f"move {round(0.5 * 650)} {round(0.5 * 1430)}", "click"]  # re-homed
+
+
+class FakeRelay:
+    def __init__(self):
+        self.loaded, self.copied = asyncio.Event(), asyncio.Event()
+
+    def offer(self, text):
+        self.text = text
+        self.loaded.set()
+        self.copied.set()
+        return "10.0.0.2:8890/123456"
+
+
+def relay_phone(tmp_path, monkeypatch, pasted):
+    monkeypatch.setenv("HIDAGENT_PASTE", "0")
+    monkeypatch.setattr(vision, "changed", lambda *a, **k: next(pasted))
+    phone, device = make_phone(tmp_path)
+    phone.screen, phone.relay = FakeScreen(), FakeRelay()
+    calls = []
+
+    async def open_app(name):
+        calls.append(f"open {name}")
+
+    async def tap(x, y, aim=True):
+        calls.append(f"tap {x} {y}")
+
+    async def previous_app():
+        calls.append("previous app")
+
+    phone.open_app, phone.tap, phone.previous_app = open_app, tap, previous_app
+    return phone, device, calls
+
+
+def test_chinese_is_copied_in_safari_and_pasted_back_in_the_app(tmp_path, monkeypatch):
+    phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([True]))
+    asyncio.run(phone.type("HSBC Pulse信用卡如何还款"))
+    assert phone.relay.text == "HSBC Pulse信用卡如何还款"
+    assert calls == ["open Safari", "tap 0.5 0.45", "previous app"]
+    assert device.sent == ["key cmd+l", "type 10.0.0.2:8890/123456", "key enter", "key cmd+v"]
+
+
+def test_a_relay_paste_that_changed_nothing_taps_the_field_again(tmp_path, monkeypatch):
+    phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([False, True]))
+    phone.last_tap = (0.4, 0.1)
+    asyncio.run(phone.type("你好"))
+    assert calls[-1] == "tap 0.4 0.1" and device.sent[-1] == "key cmd+v" and device.sent.count("key cmd+v") == 2
