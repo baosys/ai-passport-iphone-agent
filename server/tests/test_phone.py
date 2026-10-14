@@ -137,6 +137,16 @@ def test_pinyin_follows_a_paste_that_changed_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(vision, "changed", lambda *a, **k: False)
     asyncio.run(phone.type("郭兴华"))
     assert device.sent == ["key cmd+v", "type guoxinghua", "key space"]
+    asyncio.run(phone.type("郭兴华"))  # no clipboard reached the phone a moment ago: do not wait for it again
+    assert device.sent[3:] == ["type guoxinghua", "key space"]
+
+
+def test_signs_without_a_pinyin_key_are_typed_in_words(tmp_path, monkeypatch):
+    monkeypatch.setenv("HIDAGENT_PASTE", "0")
+    phone, device = make_phone(tmp_path)
+    asyncio.run(phone.type("晴 18–32°，2026-10-15"))
+    assert device.sent == ["type qing", "key space", "type  18", "type dao", "key space", "type 32", "type du",
+                           "key space", "type ,2026-10-15"]
 
 
 def test_tap_finds_the_pointer_and_fixes_the_miss_by_default(tmp_path, monkeypatch):

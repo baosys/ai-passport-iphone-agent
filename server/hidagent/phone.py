@@ -39,6 +39,8 @@ PASTE_SYNC = 0.5        # seconds for Universal Clipboard to offer a new copy to
 HOME_SETTLE = 0.6       # seconds for the home screen to come up after cmd+h, before esc reaches it
 SEARCH_ANIMATION = 0.5  # seconds for search to open or close when there is no mirror to watch
 PASTE_SPOTS = 60        # changed pixels that count as pasted text; a blinking cursor alone stays below
+PASTE_RETRY = 600       # seconds without trying to paste after a paste changed nothing (no Universal Clipboard)
+PRESS_SETTLE = 0.08     # seconds between pressing and moving, so iOS sees a touch before it moves, not a tap
 
 
 class Phone:
@@ -50,6 +52,7 @@ class Phone:
         self._pos = None  # pointer position in mouse units; None = unknown
         self._moves = 0
         self._link = 0  # device.links when the pointer was last homed
+        self._no_paste = 0.0  # when a paste last changed nothing
         # where the pointer really landed (seen on screen) for the screen fraction we aimed at, per axis;
         # a straight-line fit through them corrects every later move, so taps get better as the agent works
         self._seen = {axis: deque(map(tuple, (saved or {}).get("seen", {}).get(axis, [])), maxlen=12)
@@ -218,6 +221,7 @@ class Phone:
         await self.point(*points[0])
         await self.device.send("press")
         try:
+            await asyncio.sleep(PRESS_SETTLE)
             for x, y in points[1:]:
                 await self._move_to(self._dx(x), self._dy(y), rehome=False)  # never home mid-drag
             if hold:
@@ -241,6 +245,8 @@ class Phone:
             await self.device.send(line)
 
     async def _paste(self, text: str) -> bool:
+        if time.time() - self._no_paste < PASTE_RETRY:  # it did not reach the phone a moment ago: no waiting again
+            return False
         if not await textinput.copy(text):
             return False
         if self.screen is None or not self.screen.live:  # cannot check: trust the paste
@@ -254,7 +260,8 @@ class Phone:
         await self.screen.settled(quiet=0.4, least=0.6, most=3.0)  # a paste from the Mac can take a second
         if vision.changed(before, self.screen.frame, spots=PASTE_SPOTS):
             return True
-        log.info("paste changed nothing on screen; typing pinyin instead")
+        log.info("paste changed nothing on screen; typing pinyin instead (no paste for %d s)", PASTE_RETRY)
+        self._no_paste = time.time()
         return False
 
     async def key(self, combo: str) -> None:

@@ -8,6 +8,7 @@ picks the first candidate with space, which needs the iOS Chinese Pinyin keyboar
 import asyncio
 import logging
 import os
+import re
 import shutil
 
 from pypinyin import lazy_pinyin
@@ -19,6 +20,16 @@ PUNCTUATION = str.maketrans({
     "，": ",", "。": ".", "？": "?", "！": "!", "：": ":", "；": ";", "、": "\\", "（": "(", "）": ")",
     "“": '"', "”": '"', "‘": "'", "’": "'", "《": "<", "》": ">", "【": "[", "】": "]", "…": "^", "　": " ",
 })
+
+
+# Signs with no key on the pinyin keyboard, said in words so they are not dropped: 18–32°C is typed as 18到32度.
+RANGE = re.compile(r"(?<=\d)\s*[–—~～]\s*(?=[-−]?\d)")
+DEGREES = re.compile(r"°\s*[CcFf]?|℃|℉")
+DASHES = str.maketrans({"–": "-", "—": "-", "−": "-", "～": "~"})
+
+
+def spoken(text: str) -> str:
+    return DEGREES.sub("度", RANGE.sub("到", text)).translate(DASHES)
 
 
 def _hanzi(ch: str) -> bool:
@@ -39,7 +50,7 @@ def pinyin_lines(text: str) -> list[str]:
             if hanzi:
                 lines.append("key space")
 
-    for ch in text.translate(PUNCTUATION):
+    for ch in spoken(text).translate(PUNCTUATION):
         is_hanzi = _hanzi(ch)
         if not is_hanzi and not ch.isascii():
             log.warning("no key for %r, skipped", ch)
