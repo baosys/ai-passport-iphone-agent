@@ -47,6 +47,15 @@ def test_open_app_searches_from_home_and_takes_the_input_method_candidate(tmp_pa
                            "key space", "key enter"]
 
 
+def test_open_app_adds_no_space_after_a_chinese_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(phone_module, "HOME_SETTLE", 0)
+    monkeypatch.setattr(phone_module, "SEARCH_ANIMATION", 0)
+    monkeypatch.setenv("HIDAGENT_PASTE", "0")
+    phone, device = make_phone(tmp_path)
+    asyncio.run(phone.open_app("小红书"))
+    assert device.sent[4:] == ["key cmd+a", "type xiaohongshu", "key space", "key enter"]
+
+
 def test_back_swipe_starts_pinned_on_the_left_edge(tmp_path):
     phone, device = make_phone(tmp_path)
     asyncio.run(phone.go_back())

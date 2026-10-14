@@ -281,8 +281,10 @@ class Phone:
     async def open_app(self, name: str) -> None:
         """Open an app through search: home, cmd+space, the name over any earlier query, then space and enter.
 
-        With a Chinese input method the typed letters wait as a candidate; space takes the first one (with a plain
-        layout it only adds a space, which search ignores), and enter opens the top result."""
+        With a Chinese input method typed letters wait as a candidate; space takes the first one (with a plain
+        layout it only adds a space, which search ignores), and enter opens the top result. A Chinese name is
+        already in the field (pasted, or its pinyin taken by type): a space after it would be a real one, and
+        "小红书 " puts the app's page in Settings on top instead of the app."""
         await self.go_home()
         for _ in range(2):  # once more if iOS ignored it
             before = self.screen.frame if self.screen is not None else None
@@ -293,7 +295,8 @@ class Phone:
             log.info("open %s: search did not open; pressing cmd+space again", name)
         await self.device.send("key cmd+a")  # search may come back with an earlier query: type over it
         await self.type(name)
-        await self.device.send("key space")
+        if name.isascii():
+            await self.device.send("key space")
         await self.device.send("key enter")
 
     async def _still(self) -> None:
