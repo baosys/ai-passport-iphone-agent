@@ -30,16 +30,20 @@ def moves(lines):
     return [tuple(map(int, line.split()[1:])) for line in lines if line.startswith("move")]
 
 
-def test_home_swipe_starts_pinned_on_the_bottom_edge(tmp_path):
+def test_home_is_cmd_h_then_esc_to_close_a_search_left_open(tmp_path, monkeypatch):
+    monkeypatch.setattr(phone_module, "HOME_SETTLE", 0)
     phone, device = make_phone(tmp_path)
     asyncio.run(phone.go_home())
-    press = device.sent.index("press")
-    # Before pressing, the pointer is pushed down past the edge by a quarter of the screen height.
-    assert device.sent[press - 1] == f"move 0 {round(EDGE_PUSH * 1024)}"
-    # Then one upward move from the bottom edge (y = 1.0) to y = 0.6, and the button is let go.
-    (dx, dy), = moves(device.sent[press:])
-    assert dx == 0 and dy == round(0.6 * 1024) - 1024
-    assert device.sent[-1] == "release"
+    assert device.sent == ["key cmd+h", "key esc", "key esc"]
+
+
+def test_open_app_searches_from_home_and_takes_the_input_method_candidate(tmp_path, monkeypatch):
+    monkeypatch.setattr(phone_module, "HOME_SETTLE", 0)
+    monkeypatch.setattr(phone_module, "SEARCH_OPEN", 0)
+    phone, device = make_phone(tmp_path)
+    asyncio.run(phone.open_app("Settings"))
+    assert device.sent == ["key cmd+h", "key esc", "key esc", "key cmd+space", "type Settings", "key space",
+                           "key enter"]
 
 
 def test_back_swipe_starts_pinned_on_the_left_edge(tmp_path):
@@ -63,7 +67,7 @@ def test_release_follows_press_even_when_the_swipe_fails(tmp_path):
 
     device.send = fail_on_move_after_press
     try:
-        asyncio.run(phone.go_home())
+        asyncio.run(phone.go_back())
     except RuntimeError:
         pass
     assert device.sent[-1] == "release"

@@ -32,6 +32,8 @@ EDGE_PUSH = 0.25        # screen fraction pushed past an edge so the pointer sto
 # top of AirPlay's, so the first new frame after a nudge often still shows the old pointer; wait this long first.
 POINTER_LAG = float(os.environ.get("HIDAGENT_POINTER_LAG", 0.35))
 PASTE_SYNC = 0.5        # seconds for Universal Clipboard to offer a new copy to the phone before pasting
+HOME_SETTLE = 0.6       # seconds for the home screen to come up after cmd+h, before esc reaches it
+SEARCH_OPEN = 0.4       # seconds for the search field to open after cmd+space, when there is no mirror to watch
 PASTE_SPOTS = 60        # changed pixels that count as pasted text; a blinking cursor alone stays below
 
 
@@ -247,8 +249,29 @@ class Phone:
         await self.device.send(f"key {combo}")
 
     async def go_home(self) -> None:
-        """Swipe up from the home indicator (no rest at the end: that would open the app switcher)."""
-        await self._edge_swipe((0.5, 0.9), (0, EDGE_PUSH), (0.5, 1.0), (0.5, 0.6))
+        """cmd+h, then esc twice. Leaving an app that was opened from search shows the search screen again: the
+        first esc clears its text, the second closes it. On the home screen esc does nothing.
+
+        Faster than the swipe up from the home indicator, which also tends to stop in the app switcher."""
+        await self.device.send("key cmd+h")
+        await asyncio.sleep(HOME_SETTLE)
+        for _ in range(2):
+            await self.device.send("key esc")
+
+    async def open_app(self, name: str) -> None:
+        """Open an app through search: home, cmd+space, the name, then space and enter.
+
+        With a Chinese input method the typed letters wait as a candidate; space takes the first one (with a plain
+        layout it only adds a space, which search ignores), and enter opens the top result."""
+        await self.go_home()
+        await self.device.send("key cmd+space")
+        if self.screen is not None and self.screen.live:
+            await self.screen.settled(quiet=0.15, least=0.1, most=1.0)
+        else:
+            await asyncio.sleep(SEARCH_OPEN)
+        await self.type(name)
+        await self.device.send("key space")
+        await self.device.send("key enter")
 
     async def go_back(self) -> None:
         """Swipe in from the left edge."""

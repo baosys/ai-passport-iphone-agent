@@ -138,6 +138,11 @@ def test_parse_open_app_by_search():
         ("key", "cmd+space"), ("type", "Notes"), ("key", "enter")]
 
 
+def test_parse_open_app_by_name():
+    assert [(a["action"], a["app"]) for a in parse_actions("THINK: Open Notes.\nDO: open Notes")] == [("open", "Notes")]
+    assert parse_command('open "App Store"') == {"action": "open", "app": "App Store"}
+
+
 @pytest.mark.parametrize(("line", "combo"), [
     ("key Cmd + Space", "cmd+space"), ("key cmd+H", "cmd+h"), ("key return", "enter"), ("key Escape", "esc"),
     ('key "shift+tab"', "shift+tab"), ("key command+option+left arrow", "cmd+alt+left"), ("key ⌘+a", "cmd+a"),

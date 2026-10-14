@@ -52,6 +52,7 @@ function describeStep(s) {
     circle: ["Draw a circle", "画一个圆"],
     type: [`Type “${s.text}”`, `输入“${s.text}”`],
     key: [`Press ${s.combo}`, `按 ${s.combo}`],
+    open: [`Open “${s.app}”`, `打开“${s.app}”`],
     home: ["Go to the Home Screen", "回到主屏幕"],
     back: ["Go back", "返回"],
     wait: ["Wait for the screen", "等待画面加载"],

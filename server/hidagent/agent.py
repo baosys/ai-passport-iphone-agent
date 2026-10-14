@@ -22,8 +22,8 @@ write a short numbered plan (at most 6 steps) of what to do on screen. Plain tex
 Plan only what the goal needs, from what you can see; never invent accounts, emails, logins or
 screens you have not seen. Later steps can stay general (e.g. "Draw the face on the canvas").
 The phone has a hardware keyboard, and keys are much faster than taps: plan with them where they work.
-To open an app, use search, never page through home screens: press cmd+space, type the app name, press enter.
-To go to the home screen, press cmd+h."""
+To open an app, write "Open <app name>": the agent opens apps through search in one step, never by paging
+through home screens. Going to the home screen is one fast step too."""
 
 ACTOR_PROMPT = """You operate an iPhone through a mouse pointer and a hardware keyboard. You see the current screen.
 Reply in this format, nothing else:
@@ -42,10 +42,12 @@ Each recent action says whether the screen changed after it. If it did NOT chang
 missed or had no effect: do not assume it worked; aim again more precisely or try another way.
 Keys are fast: no pointer travel, no aiming. A tap costs a few seconds. Whenever keys reach the same result,
 use them instead of taps:
-- Open any app: key cmd+space, type its name, key enter (three DO lines; enter opens the top result).
-- Go to the home screen: key cmd+h. Use home (a slower swipe) only if cmd+h changed nothing.
+- Open any app: open NAME (one DO line, from any screen: it goes home, searches NAME and opens the top result).
+  Letters type fastest: use the English name (open Settings, open WeChat), or pinyin for a Chinese-only name.
+- Go to the home screen: home (keyboard, fast).
 - A focused text field (blinking cursor, or highlighted) takes typing directly: do not tap it first.
-- key esc closes search, menus and many alerts; check the result.
+- key esc closes menus and many alerts; check the result. In search, the first esc clears the text, the second
+  closes search.
 - Full Keyboard Access: if a colored focus ring outlines one item, the user turned it on (Settings ->
   Accessibility -> Keyboards). Then key tab / shift+tab moves the ring to the next / previous item, arrow keys
   move it within a group, and key space activates the ringed item. Use it when the target is a move or two
@@ -70,17 +72,16 @@ Actions:
   type TEXT                 (any text, Chinese too, into the focused field; if no field is focused, tap it first)
   key COMBO                 (one of: enter esc backspace tab space up down left right, or a combo
                              joined with +: cmd+space, cmd+h, cmd+a, shift+tab)
-  home | back | wait        (home and back are pointer swipes; prefer key cmd+h for home)
+  open NAME                 (open an app by name through search)
+  home | back | wait        (home: the home screen, by keyboard; back: a swipe in from the left edge)
   replan                    (the plan no longer fits the screen)
   done ANSWER               (the goal is reached; ANSWER is the result for the user)
   fail REASON
 
 Example:
-THINK: My last action showed the home screen as intended. I open the App Store through search, which is faster
-than finding its icon.
-DO: key cmd+space
-DO: type App Store
-DO: key enter"""
+THINK: My last action showed the home screen as intended. I open the App Store by name, which is faster than
+finding its icon.
+DO: open App Store"""
 
 # not part of the action
 META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_shot", "changed")
@@ -88,9 +89,9 @@ META = ("t", "thought", "thought_zh", "think_s", "act_s", "settle_s", "shot", "_
 # action name -> argument names; numeric arguments are screen coordinates: 0-1000 inside the agent, screenshot
 # pixels when talking to the actor (most vision models answer in pixels whatever the prompt asks for)
 ACTIONS = {"tap": ("x", "y"), "swipe": ("x1", "y1", "x2", "y2"), "circle": ("x", "y", "r"), "path": ("points",),
-           "type": ("text",), "key": ("combo",), "done": ("answer",), "fail": ("reason",),
+           "type": ("text",), "key": ("combo",), "open": ("app",), "done": ("answer",), "fail": ("reason",),
            "home": (), "back": (), "wait": (), "replan": ()}
-TEXT_ARGS = ("text", "combo", "answer", "reason")
+TEXT_ARGS = ("text", "combo", "app", "answer", "reason")
 
 # key names both boards know (hardware/ai_passport/main/agent_keymap.c, hardware/hid_bridge/hid_bridge.ino);
 # a single printable ASCII character (h, a, 1, ...) also works. "delete" is AI Passport only.
@@ -362,6 +363,7 @@ class Agent:
             case "circle": await self.phone.drag(circle(p("x"), p("y"), p("r"), self.screen.aspect))
             case "type": await self.phone.type(a["text"])
             case "key": await self.phone.key(a["combo"])
+            case "open": await self.phone.open_app(a["app"])
             case "home": await self.phone.go_home()
             case "back": await self.phone.go_back()
             case "wait": pass
@@ -376,7 +378,6 @@ def _pointer_path(act: dict) -> list[tuple[float, float]]:
         case "swipe": return [f(act["x1"], act["y1"]), f(act["x2"], act["y2"])]
         case "path": return [f(*p) for p in act["points"]]
         case "circle": return [f(act["x"] + act["r"], act["y"])]
-        case "home": return [(0.5, 0.995), (0.5, 0.6)]
         case "back": return [(0.005, 0.45), (0.6, 0.45)]
         case _: return []
 

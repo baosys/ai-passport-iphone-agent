@@ -137,6 +137,11 @@ async def key(t: Text):
     return await act(phone.key(t.text))
 
 
+@app.post("/api/open")
+async def open_app(t: Text):
+    return await act(phone.open_app(t.text))
+
+
 @app.post("/api/home")
 async def home():
     return await act(phone.go_home())
