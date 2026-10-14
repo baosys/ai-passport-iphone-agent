@@ -44,6 +44,8 @@ uses the same paths a person uses — the screen and a pointer — so the phone 
 
 - **Eyes — AirPlay mirroring.** The phone mirrors its screen to [UxPlay](https://github.com/FDH2/UxPlay) running
   on your computer; a GStreamer pipeline turns the stream into JPEG frames for the agent and the web page.
+  The server keeps UxPlay running and leaves it running when it stops, so a restart does not end the mirroring;
+  when mirroring drops anyway, the board turns it back on (see [Keeping mirroring on](#keeping-mirroring-on)).
 - **Hands — a Bluetooth mouse and keyboard.** The AI Passport pairs with the iPhone as a standard Bluetooth mouse and
   keyboard. With iOS AssistiveTouch on, the mouse moves an on-screen pointer, so a click is a tap and a drag is a
   swipe. The Passport connects to the computer over USB (or Wi-Fi) and executes simple line commands (`move`,
@@ -134,6 +136,8 @@ within about 30 seconds. To run the Passport on battery over Wi-Fi instead, see
 1. **Control Center → Screen Mirroring → iPhone Agent**. The live screen appears in the web page.
 2. In the web page, open **Manual controls → Calibrate**. The server moves the pointer, finds it on the live screen
    and calibrates itself in a few seconds; if it cannot see the pointer, it asks you to click exactly on it.
+3. Still in **Manual controls**, press **Learn mirroring taps** so mirroring can come back by itself when it drops
+   (see [Keeping mirroring on](#keeping-mirroring-on)).
 
 ### 6. Give it a task
 
@@ -164,7 +168,35 @@ Plug the board into the phone instead of steps 3 and 4; it connects to the serve
 - **Taps** are marked with a red ring and a spreading ripple, swipes and strokes with a yellow path; the **Motion** switch
   turns the animation off. Every tap finds the pointer on screen and corrects it before pressing.
 - **Emergency stop** (or <kbd>Esc</kbd>) stops the agent and releases the pointer. **Clear history** empties the log.
+- **Reconnect mirroring** — learn the Screen Mirroring taps, turn automatic reconnecting on or off, or reconnect now.
 - English and Simplified Chinese interface.
+
+## Keeping mirroring on
+
+**Across server restarts.** UxPlay runs in its own session and outlives the server: stopping the server (Ctrl+C,
+closing its terminal) leaves the phone mirroring, and the next start reuses the running receiver, noted in
+`~/.hidagent/receiver.json`. If UxPlay exits by itself, the server starts it again. Its output goes to
+`~/.hidagent/uxplay.log` (the previous run's to `uxplay.log.1`). To stop it for good: `pkill uxplay`. A changed
+`AIRPLAY_NAME` replaces the old receiver on the next start.
+
+**When mirroring drops** (turned off on the phone, another device took the receiver, a network hiccup), the server turns it
+back on with the board: an edge swipe opens Control Center, then it taps Screen Mirroring and the receiver. With
+mirroring off there is nothing to look at, so the taps are learned once while mirroring is on: **Manual controls →
+Learn mirroring taps** opens Control Center and the receiver list, lets the vision model find each tap and closes
+them again. The taps are saved in `~/.hidagent/mirror.json` and replayed blind; the phone connecting to the receiver
+again is the check that it worked.
+
+- It waits 5 seconds after a drop, then tries up to four times (now, after 15 s, 45 s and 2 min) and gives up until
+  mirroring is back or **Reconnect mirroring** is switched off and on.
+- It never runs during an agent task, and an agent task cannot start while it runs. The emergency stop cancels a
+  reconnect and pauses reconnecting the same way as giving up.
+- It never taps the receiver while the phone is still connected (that would stop mirroring).
+- The phone sends no frames while its screen is still, so right after a restart the server nudges the pointer by a
+  pixel to get one. If the phone stays connected with no video for 30 seconds, the receiver is restarted.
+- Learn again after moving the Screen Mirroring control or renaming the receiver.
+
+API: `GET /api/mirror` (state and learned taps), `POST /api/mirror` with `{"auto": true|false}`,
+`POST /api/mirror/learn`, `POST /api/mirror/reconnect`. `/api/status` includes the state under `mirror`.
 
 ## Configuration
 

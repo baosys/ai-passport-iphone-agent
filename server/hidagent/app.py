@@ -14,6 +14,7 @@ from .agent import Agent
 from .debug import Trace
 from .device import Device, DeviceError
 from .llm import LLM
+from .mirror import Mirror
 from .phone import Phone
 from .screen import Screen
 
@@ -22,11 +23,13 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DEBUG = os.environ.get("HIDAGENT_DEBUG") == "1"
 
 device = Device()
-screen = Screen(os.environ.get("AIRPLAY_NAME", "iPhone Agent"))
+AIRPLAY_NAME = os.environ.get("AIRPLAY_NAME", "iPhone Agent")
+screen = Screen(AIRPLAY_NAME, state=DATA_DIR / "receiver.json")
 phone = Phone(device, DATA_DIR / "calibration.json", screen)
 agent = Agent(phone, screen, LLM.from_env("ACTOR"), LLM.from_env("PLANNER"),
               Trace(DATA_DIR / "traces" if DEBUG else None),
               max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)))
+mirror = Mirror(phone, screen, agent.actor, DATA_DIR / "mirror.json", AIRPLAY_NAME, busy=lambda: agent.running)
 
 
 @asynccontextmanager
@@ -34,7 +37,10 @@ async def lifespan(_):
     server = await device.serve("0.0.0.0", int(os.environ.get("DEVICE_PORT", 7300)))
     screen.start()
     awake = asyncio.create_task(device.keep_awake(screen=screen))
+    watch = asyncio.create_task(mirror.watch())
     yield
+    watch.cancel()
+    await mirror.stop()
     awake.cancel()
     screen.stop()
     server.close()
@@ -95,7 +101,8 @@ def status():
     return {"device": device.connected, "screen": screen.live, "calibrated": phone.calibrated,
             "debug": DEBUG, "trace": str(agent.trace.dir or ""), "aspect": round(screen.aspect, 4),
             "models": {"planner": agent.planner.model, "actor": agent.actor.model},
-            "agent": {"running": agent.running, "task": agent.task, "steps": agent.steps}}
+            "agent": {"running": agent.running, "task": agent.task, "steps": agent.steps},
+            "mirror": mirror.status()}
 
 
 @app.get("/api/frame.jpg")
@@ -175,8 +182,44 @@ def calibrate_finish(p: Point):
     return {"ok": True, "span": phone.span}
 
 
+class Auto(BaseModel):
+    auto: bool
+
+
+@app.get("/api/mirror")
+def mirror_status():
+    return {**mirror.status(), "spots": mirror.spots}
+
+
+@app.post("/api/mirror")
+def mirror_auto(a: Auto):
+    """Turn reconnecting Screen Mirroring by itself on or off."""
+    mirror.set_auto(a.auto)
+    return {"ok": True, **mirror.status()}
+
+
+@app.post("/api/mirror/learn")
+async def mirror_learn():
+    """With mirroring on: find the Control Center taps that turn it on, for replaying blind later."""
+    try:
+        return {"ok": True, "spots": await mirror.run(mirror.learn())}
+    except (DeviceError, RuntimeError) as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@app.post("/api/mirror/reconnect")
+async def mirror_reconnect():
+    """Replay the learned taps now; {"ok": true} once mirroring is back."""
+    try:
+        return {"ok": await mirror.run(mirror.reconnect())}
+    except (DeviceError, RuntimeError) as e:
+        raise HTTPException(409, str(e)) from e
+
+
 @app.post("/api/agent")
 async def agent_start(t: Text):
+    if mirror.running:
+        raise HTTPException(409, "turning Screen Mirroring back on: try again in a moment")
     try:
         agent.start(t.text)
     except RuntimeError as e:
@@ -188,6 +231,7 @@ async def agent_start(t: Text):
 async def agent_stop():
     """Emergency stop: cancel the agent and release the mouse button."""
     agent.stop()
+    await mirror.stop()
     await asyncio.sleep(0.1)  # let a gesture in flight finish its own release
     return await act(phone.reset()) if device.connected else {"ok": True}
 

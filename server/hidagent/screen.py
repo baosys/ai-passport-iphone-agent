@@ -1,13 +1,24 @@
-"""The phone's screen, received over AirPlay mirroring by UxPlay, as JPEG frames."""
+"""The phone's screen, received over AirPlay mirroring by UxPlay, as JPEG frames.
+
+UxPlay runs detached from the server and serves its frames on a local TCP port, so it outlives a server restart and
+the phone keeps mirroring; the next server start finds it again through a small state file.
+"""
 
 import asyncio
+import json
 import logging
 import os
+import signal
+import socket
 import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+RETRY = 0.5  # seconds between attempts to reach the frame port (it is closed while no phone is mirroring)
 
 
 def frame_size(jpeg: bytes | None) -> tuple[int, int] | None:
@@ -20,14 +31,48 @@ def frame_size(jpeg: bytes | None) -> tuple[int, int] | None:
     return (w, h) if w and h else None
 
 
-class Screen:
-    """Runs UxPlay with a GStreamer sink that writes JPEGs into a pipe; keeps the latest one."""
+def _alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
-    def __init__(self, name: str = "iPhone Agent", fps: int = 8, quality: int = 75):
+
+def _command(pid: int) -> str:
+    try:
+        return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True,
+                              timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _remote(peer: str) -> bool:
+    """True for a connection to another machine (the phone), not to this one."""
+    return not (peer.startswith("127.") or peer.startswith("[::1]") or peer.startswith("[::ffff:127."))
+
+
+class Screen:
+    """Keeps a UxPlay receiver running (GStreamer sink: JPEG frames on a local TCP port) and keeps the latest frame."""
+
+    def __init__(self, name: str = "iPhone Agent", fps: int = 8, quality: int = 75, state: Path | None = None):
         self.name, self.fps, self.quality = name, fps, quality
+        self._state = state  # where the running receiver is noted, so the next server start reuses it
         self.frame: bytes | None = None
         self.updated = 0.0
-        self._proc = None
+        self.pid: int | None = None
+        self._proc = None  # set only when this server started the receiver (an adopted one is not our child)
+        self._sock = None
         self._clients_at, self._clients_n = 0.0, None
         self._stopping = False
 
@@ -35,49 +80,129 @@ class Screen:
         threading.Thread(target=self._supervise, daemon=True).start()
 
     def stop(self) -> None:
+        """Stop reading frames. The receiver keeps running, so the phone keeps mirroring across a restart."""
         self._stopping = True
-        if self._proc:
+        if self._sock:
+            try:
+                self._sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def restart(self) -> None:
+        """Stop the receiver; the supervisor starts a fresh one (the phone then has to connect again)."""
+        if not self._running():
+            return
+        if self._proc is not None:
             self._proc.terminate()
+        else:
+            os.kill(self.pid, signal.SIGTERM)
+
+    def _config(self) -> dict:
+        return {"name": self.name, "fps": self.fps, "quality": self.quality}
+
+    def _running(self) -> bool:
+        if self._proc is not None:
+            return self._proc.poll() is None  # also reaps it once it exits
+        return _alive(self.pid)
 
     def _supervise(self) -> None:
-        """Keep UxPlay running: it exits on some disconnects, so restart it every time."""
+        """Keep a receiver running and read its frames. UxPlay rebuilds its pipeline (and the frame port) for every
+        mirroring session, so a closed or refused port is normal; only a receiver that exited is started again."""
+        port = self._adopt()
         while not self._stopping:
-            read_fd, write_fd = os.pipe()
-            sink = (f"videorate drop-only=true ! video/x-raw,framerate={self.fps}/1 ! "
-                    f"jpegenc quality={self.quality} ! fdsink fd={write_fd}")
+            if not self._running():
+                if self.pid:
+                    log.warning("AirPlay receiver exited, restarting")
+                    time.sleep(1)
+                try:
+                    port = self._spawn()
+                except OSError as e:  # e.g. uxplay is not on PATH
+                    log.error("cannot start the AirPlay receiver: %s", e)
+                    time.sleep(10)
+                    continue
+            try:
+                self._sock = socket.create_connection(("127.0.0.1", port), timeout=2)
+            except OSError:
+                time.sleep(RETRY)
+                continue
+            log.debug("reading frames from the AirPlay receiver on port %d", port)
+            self._read(self._sock)  # returns when the pipeline closes the port: the phone stopped mirroring
+            self._sock = None
+            self.frame = None
+
+    def _adopt(self) -> int | None:
+        """Reuse a receiver a previous server run left behind, if it is still running with the same settings."""
+        if self._state is None or not self._state.exists():
+            return None
+        try:
+            saved = json.loads(self._state.read_text())
+            pid, port = int(saved["pid"]), int(saved["port"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if not _alive(pid) or f"port={port}" not in _command(pid):  # gone, or the pid now belongs to something else
+            return None
+        if saved.get("config") != self._config():
+            log.info("AirPlay receiver (pid %d) has other settings; replacing it", pid)
+            os.kill(pid, signal.SIGTERM)
+            return None
+        self.pid = pid
+        log.info("AirPlay receiver '%s' already running (pid %d): reusing it", self.name, pid)
+        return port
+
+    def _spawn(self) -> int:
+        port = _free_port()
+        sink = (f"videorate drop-only=true ! video/x-raw,framerate={self.fps}/1 ! "
+                f"jpegenc quality={self.quality} ! tcpserversink host=127.0.0.1 port={port} sync=false")
+        logfile = self._state.with_name("uxplay.log") if self._state else None
+        if logfile and logfile.exists():
+            logfile.replace(logfile.with_name("uxplay.log.1"))  # keep the last run's log: why did it exit?
+        out = open(logfile, "wb") if logfile else None  # the receiver keeps its own copy of the descriptor
+        try:
+            # its own session: Ctrl+C on the server or closing its terminal does not reach the receiver
             self._proc = subprocess.Popen(
                 ["uxplay", "-n", self.name, "-nh", "-a", "-reset", "0", "-vs", sink],
-                pass_fds=(write_fd,))  # UxPlay logs to stdout: keep them in ours
-            os.close(write_fd)
-            log.info("AirPlay receiver '%s' started (pid %d)", self.name, self._proc.pid)
-            self._read(read_fd)  # returns when UxPlay closes the pipe
-            code = self._proc.wait()
-            self.frame = None
-            log.warning("AirPlay receiver exited (code %s), restarting", code)
-            time.sleep(1)
+                stdin=subprocess.DEVNULL, stdout=out or sys.stdout, stderr=subprocess.STDOUT, start_new_session=True)
+        finally:
+            if out:
+                out.close()
+        self.pid = self._proc.pid
+        if self._state:
+            self._state.write_text(json.dumps({"pid": self.pid, "port": port, "config": self._config()}))
+        log.info("AirPlay receiver '%s' started (pid %d, log %s)", self.name, self.pid, logfile or "stdout")
+        return port
+
+    @property
+    def mirroring(self) -> bool:
+        """A phone is mirroring to the receiver, frame or not: a still screen sends none, so right after the server
+        restarts (or the frame port reopens) there is no frame until something on the phone moves."""
+        if not self._running():
+            return False
+        clients = self._clients()
+        if clients is not None:  # is a phone connected to UxPlay right now?
+            return clients > 0
+        return self.frame is not None and time.time() - self.updated < 90  # unknown: guess from recent frames
 
     @property
     def live(self) -> bool:
-        running = self._proc is not None and self._proc.poll() is None
-        if not running or self.frame is None:
-            return False
-        clients = self._clients()
-        if clients is not None:  # Linux: is a phone connected to UxPlay right now?
-            return clients > 0
-        return time.time() - self.updated < 90  # elsewhere: AirPlay sends no frames while the screen is still
+        """Mirroring, with a frame to look at."""
+        return self.frame is not None and self.mirroring
 
     def _clients(self) -> int | None:
-        """Established TCP connections of the UxPlay process (a mirroring phone keeps some open).
+        """Established TCP connections from another machine to UxPlay (a mirroring phone keeps some open).
 
-        Read from /proc, cached for a second; None where /proc is not available (e.g. macOS).
+        Read from /proc on Linux and with lsof elsewhere, cached for a second; None when neither works.
         """
         if time.time() - self._clients_at < 1:
             return self._clients_n
+        n = self._clients_proc() if os.path.isdir("/proc/self/fd") else self._clients_lsof()
+        self._clients_at, self._clients_n = time.time(), n
+        return n
+
+    def _clients_proc(self) -> int | None:
         try:
-            fds = os.listdir(f"/proc/{self._proc.pid}/fd")
             inodes = set()
-            for fd in fds:
-                link = os.readlink(f"/proc/{self._proc.pid}/fd/{fd}")
+            for fd in os.listdir(f"/proc/{self.pid}/fd"):
+                link = os.readlink(f"/proc/{self.pid}/fd/{fd}")
                 if link.startswith("socket:["):
                     inodes.add(link[8:-1])
             n = 0
@@ -85,11 +210,22 @@ class Screen:
                 with open(table) as f:
                     for row in f.readlines()[1:]:
                         cols = row.split()
-                        n += cols[3] == "01" and cols[9] in inodes  # 01 = ESTABLISHED
+                        # 01 = ESTABLISHED; the remote address is hex, 0100007F = 127.0.0.1 (our frame reader)
+                        n += cols[3] == "01" and cols[9] in inodes and not cols[2].startswith(
+                            ("0100007F", "0000000000000000FFFF00000100007F", "00000000000000000000000001000000"))
         except OSError:
-            n = None
-        self._clients_at, self._clients_n = time.time(), n
+            return None
         return n
+
+    def _clients_lsof(self) -> int | None:
+        try:
+            out = subprocess.run(["lsof", "-a", "-p", str(self.pid), "-iTCP", "-sTCP:ESTABLISHED", "-nP", "-Fn"],
+                                 capture_output=True, text=True, timeout=2).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if not out.startswith("p"):  # no such process, or no connections at all
+            return 0 if _alive(self.pid) else None
+        return sum(_remote(line.partition("->")[2]) for line in out.splitlines() if line.startswith("n"))
 
     @property
     def aspect(self) -> float:
@@ -113,11 +249,16 @@ class Screen:
             await asyncio.sleep(0.02)
         return self.frame
 
-    def _read(self, fd: int) -> None:
+    def _read(self, sock: socket.socket) -> None:
+        sock.settimeout(None)
         buf = b""
-        with os.fdopen(fd, "rb", buffering=0) as pipe:
-            while chunk := pipe.read(1 << 16):
+        try:
+            while chunk := sock.recv(1 << 16):
                 buf += chunk
                 while (start := buf.find(b"\xff\xd8")) >= 0 and (end := buf.find(b"\xff\xd9", start)) >= 0:
                     self.frame, self.updated = buf[start:end + 2], time.time()
                     buf = buf[end + 2:]
+        except OSError:
+            pass
+        finally:
+            sock.close()

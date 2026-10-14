@@ -1,0 +1,84 @@
+import json
+import signal
+
+import hidagent.screen as screen_module
+from hidagent.screen import Screen, _remote
+
+CONFIG = {"name": "iPhone Agent", "fps": 8, "quality": 75}
+
+
+def left_behind(tmp_path, config=CONFIG, pid=4242, port=50123):
+    state = tmp_path / "receiver.json"
+    state.write_text(json.dumps({"pid": pid, "port": port, "config": config}))
+    return state
+
+
+def running(monkeypatch, pid=4242, command="uxplay -n iPhone Agent -vs ... tcpserversink port=50123 sync=false"):
+    killed = []
+    monkeypatch.setattr(screen_module, "_alive", lambda p: p == pid)
+    monkeypatch.setattr(screen_module, "_command", lambda p: command if p == pid else "")
+    monkeypatch.setattr(screen_module.os, "kill", lambda p, sig: killed.append((p, sig)))
+    return killed
+
+
+def test_a_receiver_left_by_the_last_run_is_reused(tmp_path, monkeypatch):
+    killed = running(monkeypatch)
+    screen = Screen(state=left_behind(tmp_path))
+    assert screen._adopt() == 50123
+    assert screen.pid == 4242 and screen._running() and killed == []
+
+
+def test_a_receiver_with_other_settings_is_replaced(tmp_path, monkeypatch):
+    killed = running(monkeypatch)
+    screen = Screen(state=left_behind(tmp_path, {**CONFIG, "name": "Old name"}))
+    assert screen._adopt() is None
+    assert killed == [(4242, signal.SIGTERM)] and screen.pid is None
+
+
+def test_a_reused_pid_is_not_mistaken_for_the_receiver(tmp_path, monkeypatch):
+    killed = running(monkeypatch, command="/usr/bin/some-other-program")
+    screen = Screen(state=left_behind(tmp_path))
+    assert screen._adopt() is None and killed == []
+
+
+def test_no_state_or_a_broken_one_starts_fresh(tmp_path, monkeypatch):
+    running(monkeypatch)
+    assert Screen(state=tmp_path / "receiver.json")._adopt() is None
+    (tmp_path / "receiver.json").write_text("{")
+    assert Screen(state=tmp_path / "receiver.json")._adopt() is None
+
+
+def test_stopping_the_server_leaves_the_receiver_running(tmp_path, monkeypatch):
+    killed = running(monkeypatch)
+    screen = Screen(state=left_behind(tmp_path))
+    screen._adopt()
+    screen.stop()
+    assert killed == [] and screen._running()
+
+
+def test_restart_stops_the_receiver_for_the_supervisor_to_replace(tmp_path, monkeypatch):
+    killed = running(monkeypatch)
+    screen = Screen(state=left_behind(tmp_path))
+    screen._adopt()
+    screen.restart()
+    assert killed == [(4242, signal.SIGTERM)]
+
+
+def test_live_needs_a_phone_connected_and_a_frame(tmp_path, monkeypatch):
+    running(monkeypatch)
+    screen = Screen(state=left_behind(tmp_path))
+    screen._adopt()
+    monkeypatch.setattr(screen, "_clients", lambda: 2)
+    assert screen.mirroring and not screen.live  # mirroring a still screen: no frame yet
+    screen.frame = b"jpeg"
+    monkeypatch.setattr(screen, "_clients", lambda: 0)
+    assert not screen.live  # the pipeline is up but no phone is connected
+    monkeypatch.setattr(screen, "_clients", lambda: 2)
+    assert screen.live
+
+
+def test_remote_peers():
+    assert _remote("192.168.1.23:7000")
+    assert _remote("[fe80::1]:7000")
+    assert not _remote("127.0.0.1:50123")
+    assert not _remote("[::1]:50123")

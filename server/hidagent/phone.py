@@ -288,6 +288,10 @@ class Phone:
         """Swipe in from the left edge."""
         await self._edge_swipe((0.1, 0.45), (-EDGE_PUSH, 0), (0.0, 0.45), (0.6, 0.45))
 
+    async def control_center(self) -> None:
+        """Swipe down from the top edge right of the notch (Face ID iPhones)."""
+        await self._edge_swipe((0.9, 0.06), (0, -EDGE_PUSH), (0.9, 0.0), (0.9, 0.55))
+
     async def _edge_swipe(self, near: tuple[float, float], push: tuple[float, float],
                           edge: tuple[float, float], end: tuple[float, float]) -> None:
         """A system gesture that must start exactly on a screen edge.

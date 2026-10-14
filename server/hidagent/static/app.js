@@ -241,6 +241,12 @@ $("clear").addEventListener("click", async () => {
   if (await post("/api/agent/clear")) { $("task").value = ""; say(null); }
 });
 $("estop").addEventListener("click", () => post("/api/agent/stop"));
+$("mirror-auto").addEventListener("change", (e) => post("/api/mirror", { auto: e.target.checked }));
+$("mirror-learn").addEventListener("click", async () => { if (await post("/api/mirror/learn")) say("mirrorLearned"); });
+$("mirror-now").addEventListener("click", async () => {
+  const r = await post("/api/mirror/reconnect");
+  if (r) say(r.ok ? "mirrorBack" : "mirrorMissed");
+});
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("zoom").open) post("/api/agent/stop"); });
 
 // ---- polling -------------------------------------------------------------------------
@@ -259,6 +265,14 @@ async function poll() {
     $("stop").hidden = !a.running;
     $("clear").hidden = a.running || !steps.length;
     $("live-dot").classList.toggle("on", a.running);
+
+    const m = s.mirror, busy = ["learning", "reconnecting"].includes(m.state);
+    $("mirror-auto").checked = m.auto;
+    $("mirror-learn").disabled = busy || a.running || !s.screen || !s.calibrated;
+    $("mirror-now").disabled = busy || a.running || !m.learned || !s.device;
+    $("mirror-state").textContent = m.error || t(!m.learned && !busy ? "mirrorUnlearned"
+      : { learning: "mirrorLearning", reconnecting: "mirrorReconnecting", waiting: "mirrorWaiting", "gave up": "mirrorGaveUp" }[m.state]
+        || "mirrorReady");
 
     aspect = s.aspect || aspect;
     document.documentElement.style.setProperty("--aspect", aspect);  // phone frame and wall cards follow the mirror

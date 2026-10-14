@@ -55,6 +55,7 @@ main { display: grid; grid-template-columns: auto minmax(300px, 1fr) minmax(420p
 .manual { width: 100%; color: var(--muted); }
 .manual summary { cursor: pointer; text-align: center; }
 .manual .row { margin-top: 8px; }
+.check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 .phone:has(.manual[open]) .device { --h: calc(100vh - 360px); }  /* make room for the controls */
 
 /* 2. log */
