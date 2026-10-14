@@ -217,7 +217,8 @@ Set in `server/.env` (see [`.env.example`](server/.env.example)):
 | `HIDAGENT_DEBUG` | `0` | Debug mode, see below |
 | `HIDAGENT_POINTER_LAG` | `0.35` | Seconds to wait after nudging the pointer before looking for it on the mirrored screen (Bluetooth adds latency) |
 | `HIDAGENT_MAX_STEPS` | `100` | Most actions per task before the agent gives up; `0` runs until the task is done, fails, or you stop it |
-| `HIDAGENT_PASTE` | on with `pbcopy` (macOS) | `0` turns off pasting Chinese through Universal Clipboard; pinyin typing is used instead |
+| `HIDAGENT_PASTE` | on when the Mac is signed in to iCloud | `1` / `0` forces pasting Chinese through Universal Clipboard on / off |
+| `HIDAGENT_RELAY_HOST` | the address the phone mirrors to | Address Safari opens for the Chinese text relay |
 
 ### Local model (optional)
 
@@ -285,17 +286,18 @@ server/     agent, web UI, screen capture and board link (Python, FastAPI)
 
 - [ ] Test a fully local setup with DiffusionGemma (`server/serve/` has an experimental OpenAI-compatible server)
 - [ ] Landscape apps (screen coordinates and calibration assume portrait)
-- [x] Chinese text input (Universal Clipboard paste, pinyin as the fallback)
+- [x] Exact Chinese text input (Universal Clipboard or a Safari relay, pinyin as the last resort)
 - [ ] More example tasks across popular apps
 
 ## Limitations
 
 - iOS does not mirror some screens (passcode entry, Apple Pay, DRM video); the agent cannot see them.
 - Mirroring stops when the phone locks; keep auto-lock off while the agent works.
-- The board types ASCII only. Chinese is pasted through Universal Clipboard (macOS; the Mac and iPhone need the
-  same Apple ID with Handoff on) or, when nothing was pasted, typed as pinyin, which needs the iOS Chinese Pinyin
-  keyboard to be active and picks the first candidate. With Universal Clipboard off, the phone pastes whatever its
-  own clipboard holds; set `HIDAGENT_PASTE=0` then. Emoji and other characters without a key are skipped.
+- The board types key codes, not characters, so Chinese is pasted, exactly and at any length. With the Mac signed
+  in to the phone's Apple ID (Handoff on), Universal Clipboard carries it in about a second. Otherwise the server
+  offers the text on a one-time page: the phone opens it in Safari, one tap copies it, a swipe along the bottom edge
+  returns to the app and the text is pasted (about 20 seconds; it replaces the phone's clipboard). Pinyin typing,
+  which picks the first candidate, is only the last resort.
 - Re-calibrate after changing AssistiveTouch tracking speed.
 - Landscape apps are not supported yet: drawings and taps there land in the wrong place.
 - On Linux machines with several network interfaces, limit Avahi (mDNS) to the interface on the phone's network
