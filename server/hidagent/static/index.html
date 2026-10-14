@@ -10,9 +10,14 @@
 <main>
   <!-- 1. the real phone -->
   <section class="col phone">
-    <div class="screen">
-      <img id="live" alt="">
-      <div class="hint" id="hint" data-i18n="waiting"></div>
+    <!-- iPhone 17: Action button and volume on the left, side button and Camera Control on the right -->
+    <div class="device">
+      <i class="key action"></i><i class="key vol-up"></i><i class="key vol-down"></i><i class="key side"></i><i class="key camera"></i>
+      <div class="screen">
+        <img id="live" alt="">
+        <div class="island"></div>
+        <div class="hint" id="hint" data-i18n="waiting"></div>
+      </div>
     </div>
     <p class="caption" id="caption" data-i18n="liveCaption"></p>
     <button class="estop" id="estop" data-i18n="estop"></button>

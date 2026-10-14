@@ -1,9 +1,12 @@
 :root {
   --bg: #fff; --fg: #111; --muted: #777; --line: #e6e6e6; --soft: #f6f6f6;
   --mark: #ff3b30; --ok: #1a7f37; --hl: #ffd400; --tap: #ff1f1f;
+  --aspect: 1206 / 2622;  /* iPhone 17 screen; app.js replaces it with the mirrored frame's */
+  --band: #3a3a3d; --band-edge: #1c1c1e;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #0d0d0d; --fg: #eee; --muted: #888; --line: #262626; --soft: #171717; --ok: #3fb950; }
+  :root { --bg: #0d0d0d; --fg: #eee; --muted: #888; --line: #262626; --soft: #171717; --ok: #3fb950;
+          --band: #5a5a5f; --band-edge: #2c2c30; }
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -26,9 +29,23 @@ main { display: grid; grid-template-columns: auto minmax(300px, 1fr) minmax(420p
 
 /* 1. phone */
 .phone { display: flex; flex-direction: column; align-items: center; gap: 10px; overflow-y: auto; }
-.screen { position: relative; height: calc(100vh - 165px); aspect-ratio: 498 / 1080; flex: none;
-          background: var(--soft); border: 9px solid var(--fg); border-radius: 42px; overflow: hidden; touch-action: none; }
+/* iPhone 17 (402 x 874 pt): thin black bezel, aluminium band, Dynamic Island; --h is the display height */
+.device { --h: calc(100vh - 195px); position: relative; flex: none; padding: 0 9px; }  /* room for the keys outside the band */
+.screen { position: relative; box-sizing: content-box; height: var(--h); aspect-ratio: var(--aspect); flex: none;
+          background: var(--soft); border: calc(var(--h) * .011 + 3px) solid #000; border-radius: calc(var(--h) * .068);
+          box-shadow: 0 0 0 3px var(--band), 0 0 0 4px var(--band-edge); overflow: hidden; touch-action: none; }
 .screen img { width: 100%; height: 100%; object-fit: contain; display: block; cursor: crosshair; user-select: none; -webkit-user-drag: none; }
+.screen img:not([src]) { visibility: hidden; }  /* no frame yet: hide the empty image outline */
+.island { position: absolute; top: 1.26%; left: 50%; width: 31.3%; height: 4.2%; transform: translateX(-50%);
+          background: #000; border-radius: 999px; pointer-events: none; }
+.key { position: absolute; width: 4px; background: var(--band); border: 1px solid var(--band-edge); }
+.key.action, .key.vol-up, .key.vol-down { left: 0; border-right: 0; border-radius: 3px 0 0 3px; }
+.key.side, .key.camera { right: 0; border-left: 0; border-radius: 0 3px 3px 0; }
+.key.action   { top: 16%; height: 3.6%; }
+.key.vol-up   { top: 23%; height: 6.4%; }
+.key.vol-down { top: 31.5%; height: 6.4%; }
+.key.side     { top: 25%; height: 10%; }
+.key.camera   { top: 55%; height: 6.5%; background: var(--band-edge); }
 .hint { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); pointer-events: none; }
 .caption { color: var(--muted); font-size: 12px; margin: 0; }
 .caption.callout { color: #000; background: var(--hl); font-size: 14px; font-weight: 600; padding: 6px 12px; border-radius: 8px; }
@@ -38,7 +55,7 @@ main { display: grid; grid-template-columns: auto minmax(300px, 1fr) minmax(420p
 .manual { width: 100%; color: var(--muted); }
 .manual summary { cursor: pointer; text-align: center; }
 .manual .row { margin-top: 8px; }
-.phone:has(.manual[open]) .screen { height: calc(100vh - 330px); }  /* make room for the controls */
+.phone:has(.manual[open]) .device { --h: calc(100vh - 360px); }  /* make room for the controls */
 
 /* 2. log */
 .log { display: flex; flex-direction: column; padding: 0; }
@@ -110,7 +127,7 @@ body.still .hand { animation: none; }
 .card { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
 .card.current { border-color: var(--fg); box-shadow: 0 0 0 1px var(--fg); }
 .card.bad { border-color: var(--mark); }
-.shot { position: relative; aspect-ratio: 498 / 1080; background: var(--soft); cursor: zoom-in; }
+.shot { position: relative; aspect-ratio: var(--aspect); background: var(--soft); cursor: zoom-in; }
 .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .overlay { position: absolute; inset: 0; pointer-events: none; }
 .overlay svg { width: 100%; height: 100%; }
@@ -137,6 +154,6 @@ dialog p { color: #fff; max-width: 400px; margin: 10px 0 0; }
 }
 @media (max-width: 700px) {
   main { grid-template-columns: 1fr; }
-  .screen { height: 70vh; }
+  .device { --h: 70vh; }
   .log { max-height: 60vh; }
 }

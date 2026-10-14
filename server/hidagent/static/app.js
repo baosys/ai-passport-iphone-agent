@@ -258,6 +258,7 @@ async function poll() {
     $("live-dot").classList.toggle("on", a.running);
 
     aspect = s.aspect || aspect;
+    document.documentElement.style.setProperty("--aspect", aspect);  // phone frame and wall cards follow the mirror
     const avg = (xs) => (xs.length ? fmt(xs.reduce((n, x) => n + x, 0) / xs.length) : "–");
     const planned = steps.filter((x) => isPlan(x) && x.think_s != null).map((x) => x.think_s);
     const acted = steps.filter((x) => !isPlan(x) && x.think_s != null).map((x) => x.think_s);
