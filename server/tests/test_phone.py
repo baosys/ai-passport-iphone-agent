@@ -230,3 +230,11 @@ def test_the_field_is_tapped_again_after_the_round_trip(tmp_path, monkeypatch):
     phone.last_tap = (0.4, 0.1)
     asyncio.run(phone.type("你好"))
     assert calls[-1] == "tap 0.4 0.1" and device.sent[-2:] == ["key cmd+v", "key cmd+v"]
+
+
+def test_no_universal_clipboard_without_icloud(monkeypatch):
+    monkeypatch.delenv("HIDAGENT_PASTE", raising=False)
+    monkeypatch.setattr(textinput, "_icloud", lambda: False)
+    assert not textinput.can_copy()
+    monkeypatch.setenv("HIDAGENT_PASTE", "1")
+    assert textinput.can_copy()
