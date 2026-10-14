@@ -13,13 +13,9 @@ English · [简体中文](README.zh-CN.md)
 
 </div>
 
-<p align="center"><img src="docs/images/demo.png" alt="Example 1: the web UI after drawing a smiley face in Whiteboard, with the live screen, live log, plan and step screenshots" width="100%"></p>
+<p align="center"><img src="docs/images/demo.jpg" alt="Example: the web UI after ordering coconut water in Meituan, with the live screen, live log, plan, run summary and step screenshots" width="100%"></p>
 
-**Example 1 — draw on a canvas.** *"Open Whiteboard and draw a smiley face"*: the agent searches for the app, opens it and draws the face with continuous strokes. Every step's screenshot, with its tap or stroke drawn on top, stays on the step wall.
-
-<p align="center"><img src="docs/images/example-alarm.png" alt="Example 2: an iPhone setting an alarm that repeats every day, next to the web UI; photographed with the original ESP32-S3 board plugged in" width="100%"></p>
-
-**Example 2 — set an alarm.** *"Set an alarm for 7:00 AM that repeats every day, then save it"*: the agent opens Clock, types 0700 into the time wheel, ticks the days under Repeat several taps at a time, and saves. Left: the real iPhone (photographed with the original ESP32-S3 board); right: the web UI.
+**Example — order on Meituan.** *"帮我在美团小象超市点一杯椰子水"* (order a coconut water from Meituan's Xiaoxiang Supermarket): the agent types "美团" to find and open Meituan, opens Xiaoxiang Supermarket, searches for "椰子水" (both typed in Chinese), adds it to the cart, closes the add-on popup, places the order and pays, in 28 actions. Every step's screenshot, with its tap drawn on top, stays on the step wall.
 
 The agent sees the phone through AirPlay screen mirroring and touches it through an AI Passport, which pairs with
 the iPhone over Bluetooth as a mouse and keyboard. Any OpenAI-compatible vision model can be the brain — a cloud
