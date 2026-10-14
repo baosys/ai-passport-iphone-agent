@@ -116,7 +116,7 @@ class Phone:
         if not self.calibrated:
             raise RuntimeError("pointer not calibrated")
         await self._move_to(self._dx(x), self._dy(y))
-        if aim and self.screen is not None:
+        if aim and self.screen is not None and self.screen.live:
             await self._aim(x, y)
 
     async def _aim(self, x: float, y: float) -> None:
@@ -182,8 +182,12 @@ class Phone:
         await self.device.send("home")
         self._pos, self._moves = (0, 0), 0
 
-    async def tap(self, x: float, y: float, aim: bool = False) -> None:
-        """aim=True finds the pointer on screen first (slower); worth it when a tap just missed."""
+    async def tap(self, x: float, y: float, aim: bool = True) -> None:
+        """aim finds the pointer on the mirrored screen and fixes the miss before pressing (about 1 s slower).
+
+        On by default: iOS pointer acceleration differs a few percent by direction and distance, more than one
+        calibration can absorb, and one correction lands within AIM_TOLERANCE.
+        """
         await self.point(x, y, aim)
         await self.device.send("click")
         await asyncio.sleep(TAP_GAP)

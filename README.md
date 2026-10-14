@@ -157,7 +157,7 @@ Plug the board into the phone instead of steps 3 and 4; it connects to the serve
 - **Step wall** — the screenshot the model decided on for every step, with its tap or swipe drawn on top, plus the
   model's reasoning and how long thinking and acting took. Click a card to zoom in.
 - **Taps** are marked with a red ring and a spreading ripple, swipes and strokes with a yellow path; the **Motion** switch
-  turns the animation off. Taps the model marked `precise` (pointer checked before tapping) are labelled in the log.
+  turns the animation off. Every tap finds the pointer on screen and corrects it before pressing.
 - **Emergency stop** (or <kbd>Esc</kbd>) stops the agent and releases the pointer. **Clear history** empties the log.
 - English and Simplified Chinese interface.
 

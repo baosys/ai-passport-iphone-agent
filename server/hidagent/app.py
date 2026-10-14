@@ -58,6 +58,10 @@ class Point(BaseModel):
     y: float
 
 
+class Tap(Point):
+    aim: bool = True  # find the pointer on screen and fix the miss before pressing
+
+
 class Swipe(BaseModel):
     x1: float
     y1: float
@@ -109,8 +113,8 @@ def step_shot(index: int):
 
 
 @app.post("/api/tap")
-async def tap(p: Point):
-    return await act(phone.tap(p.x, p.y))
+async def tap(p: Tap):
+    return await act(phone.tap(p.x, p.y, p.aim))
 
 
 @app.post("/api/swipe")

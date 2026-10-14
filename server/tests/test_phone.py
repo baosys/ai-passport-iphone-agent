@@ -77,6 +77,9 @@ class FakeScreen:
     async def settled(self, **_):
         pass
 
+    async def fresh(self, since, timeout=0.8):
+        return b"after"
+
 
 def test_ascii_text_is_typed_directly(tmp_path):
     phone, device = make_phone(tmp_path)
@@ -119,3 +122,22 @@ def test_pinyin_follows_a_paste_that_changed_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(vision, "changed", lambda *a, **k: False)
     asyncio.run(phone.type("郭兴华"))
     assert device.sent == ["key cmd+v", "type guoxinghua", "key space"]
+
+
+def test_tap_finds_the_pointer_and_fixes_the_miss_by_default(tmp_path, monkeypatch):
+    phone, device = make_phone(tmp_path, w=650, h=1430)
+    phone.screen = FakeScreen()
+    monkeypatch.setattr(phone_module, "POINTER_LAG", 0)
+    monkeypatch.setattr(vision, "pointer", lambda *a, **k: (0.527, 0.885))  # landed low and right
+    asyncio.run(phone.tap(0.5, 0.831))
+    assert device.sent[-1] == "click"
+    *_, fix = moves(device.sent)
+    assert fix == (round((0.5 - 0.527) * 650), round((0.831 - 0.885) * 1430))
+
+
+def test_tap_without_a_live_mirror_does_not_wait_for_the_pointer(tmp_path):
+    phone, device = make_phone(tmp_path)
+    phone.screen = FakeScreen()
+    phone.screen.live = False
+    asyncio.run(phone.tap(0.5, 0.5))
+    assert device.sent == ["release", "home", f"move {round(0.5 * 470)} {round(0.5 * 1024)}", "click"]
