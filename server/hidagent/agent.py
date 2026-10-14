@@ -13,7 +13,7 @@ from .debug import Trace
 from .device import DeviceError
 from .llm import LLM
 from .phone import Phone
-from .screen import Screen
+from .screen import Screen, frame_size
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ Give several DO lines (up to 6, run in order) whenever the next actions do not d
 result: e.g. ticking several visible checkboxes or days, several drawing strokes, typing then pressing enter.
 Give ONE DO line when the next action depends on what this one opens or changes.
 
-Coordinates are integers 0-1000 relative to the screenshot (x left->right, y top->bottom).
+Coordinates are integer pixels of the screenshot (x left->right, y top->bottom); its size is given with each request.
 Aim at the visual center of the element you want, not its edge or its label.
 Look before you act: describe what is really on the screen now, not what you expect.
 Each recent action says whether the screen changed after it. If it did NOT change, the action
@@ -44,7 +44,7 @@ when it shows a blinking cursor (or is highlighted); then type into it. Keys on 
 (Send, Search, Go, Done) are therefore missing: press them with key enter. To send a chat message
 (WeChat, Messages, ...), type it and then key enter; do not look for a send button.
 Swipes have no momentum: content moves exactly as far as the finger and stops. Prefer short swipes
-(100-250 units) and check the result; repeat if needed rather than one big swipe.
+(a tenth to a quarter of the screen height) and check the result; repeat if needed rather than one big swipe.
 Time or number wheels (e.g. an alarm's time): first tap the number in the wheel's center row and type
 the digits (e.g. type 0700); check the result. Only if typing does not work, swipe inside that column:
 measure the row spacing from two neighbouring numbers and swipe k times that spacing to move k rows.
@@ -57,7 +57,7 @@ Actions:
   tap X Y
   swipe X1 Y1 X2 Y2         (finger moves from X1,Y1 to X2,Y2: "swipe down" means Y2 > Y1)
   path X1 Y1 X2 Y2 X3 Y3 …  (one continuous stroke through 2-20 points, for drawing)
-  circle X Y R              (draw a circle centered at X Y; R is the radius in x units)
+  circle X Y R              (draw a circle centered at X Y; R is the radius in pixels)
   type TEXT                 (any text, Chinese too; tap the input field first and check the result)
   key COMBO                 (enter, backspace, esc, cmd+a, ...)
   home | back | wait
@@ -71,7 +71,8 @@ DO: tap 152 362"""
 
 META = ("t", "thought", "thought_zh", "think_s", "act_s", "shot", "_shot", "changed")  # not part of the action
 
-# action name -> argument names; numeric arguments are 0-1000 screen coordinates
+# action name -> argument names; numeric arguments are screen coordinates: 0-1000 inside the agent, screenshot
+# pixels when talking to the actor (most vision models answer in pixels whatever the prompt asks for)
 ACTIONS = {"tap": ("x", "y"), "swipe": ("x1", "y1", "x2", "y2"), "circle": ("x", "y", "r"), "path": ("points",),
            "type": ("text",), "key": ("combo",), "done": ("answer",), "fail": ("reason",),
            "home": (), "back": (), "wait": (), "replan": ()}
@@ -115,6 +116,17 @@ def parse_plan(text: str) -> tuple[str, str]:
     """Split an optional EN: / ZH: plan reply; a plain reply is used for both."""
     m = re.search(r"EN\s*[:：](.*?)ZH\s*[:：](.*)", text, re.S | re.I)
     return (m.group(1).strip(), m.group(2).strip()) if m else (text.strip(), text.strip())
+
+
+def scale(act: dict, sx: float, sy: float) -> dict:
+    """The action with its x coordinates (and circle radius) times sx and its y coordinates times sy."""
+    out = dict(act)
+    for k in ("x", "x1", "x2", "r", "y", "y1", "y2"):
+        if k in out:
+            out[k] = round(out[k] * (sy if k.startswith("y") else sx))
+    if "points" in out:
+        out["points"] = [[round(x * sx), round(y * sy)] for x, y in out["points"]]
+    return out
 
 
 def _key(step: dict) -> dict:
@@ -264,20 +276,23 @@ class Agent:
         # actions and their effect only: echoing earlier thoughts makes the model repeat them instead of looking
         hidden = ("t", "plan", "plan_zh", "think_s", "act_s", "shot", "thought", "thought_zh", "changed")
         effect = {True: " -> screen changed", False: " -> screen did NOT change"}
-        history = "\n".join(json.dumps({k: v for k, v in s.items() if k not in hidden})[:300]
+        w, h = frame_size(self.screen.frame) or (1000, 1000)
+        history = "\n".join(json.dumps(scale({k: v for k, v in s.items() if k not in hidden}, w / 1000, h / 1000))[:300]
                             + effect.get(s.get("changed"), "")
                             for s in self.steps[-8:] if "plan" not in s) or "(none)"
-        prompt = f"Goal: {self.task}\n\nPlan:\n{self.plan}\n\nRecent actions:\n{history}\n\nNext action?"
+        prompt = (f"Goal: {self.task}\n\nPlan:\n{self.plan}\n\nRecent actions:\n{history}\n\n"
+                  f"The screenshot is {w} pixels wide and {h} pixels tall. Next action?")
         for attempt in range(3):  # retry unparseable replies, a little less deterministically
             reply, seconds, frame = await self._ask("actor", self.actor, ACTOR_PROMPT, prompt, 0.4 * attempt)
             try:
-                acts = parse_actions(reply)
+                said = parse_actions(reply)
             except ValueError as e:
                 log.warning("unparseable actor reply (%s): %s", e, reply[:200])
                 continue
+            acts = [scale(a, 1000 / w, 1000 / h) for a in said]
             if self._missed() and _key(acts[0]) == _key(self.steps[-1]):  # same move that just did nothing
                 log.info("actor repeated an action that changed nothing; asking for another")
-                prompt += (f"\n\nYou just proposed {json.dumps(_key(acts[0]))} again, but it changed nothing last "
+                prompt += (f"\n\nYou just proposed {json.dumps(_key(said[0]))} again, but it changed nothing last "
                            "time. Choose a different action (another position, a shorter swipe, or another way).")
                 continue
             acts[0]["think_s"] = seconds

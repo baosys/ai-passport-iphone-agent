@@ -92,3 +92,40 @@ def test_repeating_a_move_that_keeps_changing_the_screen_is_not_stuck():
 def test_precise_tap_flag():
     assert parse_command("tap 120 640 precise") == {"action": "tap", "x": 120, "y": 640, "precise": True}
     assert "precise" not in parse_command("tap 120 640")
+
+
+def _jpeg(w, h):  # just enough JPEG header for the frame size
+    return b"\xff\xd8\xff\xc0\x00\x11\x08" + h.to_bytes(2, "big") + w.to_bytes(2, "big") + b"\x03"
+
+
+def test_frame_size_from_the_jpeg_header():
+    from hidagent.screen import frame_size
+
+    assert frame_size(_jpeg(500, 1080)) == (500, 1080)
+    assert frame_size(b"not a jpeg") is None and frame_size(None) is None
+
+
+def test_actor_speaks_screenshot_pixels_and_the_agent_keeps_0_to_1000():
+    import asyncio
+
+    from hidagent.agent import Agent
+    from hidagent.debug import Trace
+
+    class Screen:
+        live, frame = True, _jpeg(500, 1080)
+
+    class Actor:
+        model = "fake"
+        prompt = ""
+        async def chat(self, system, text, image=None, max_tokens=600, temperature=0):
+            self.prompt = text
+            return "THINK: search\nDO: tap 250 898\nDO: circle 250 540 100"
+
+    actor = Actor()
+    agent = Agent(phone=None, screen=Screen(), actor=actor, planner=actor, trace=Trace(None))
+    agent.steps = [{"action": "swipe", "x1": 500, "y1": 800, "x2": 500, "y2": 400, "changed": True}]
+    tap, ring = asyncio.run(agent._next_actions())
+    assert "500 pixels wide and 1080 pixels tall" in actor.prompt
+    assert '"x1": 250, "y1": 864, "x2": 250, "y2": 432' in actor.prompt  # history in the actor's pixels
+    assert (tap["x"], tap["y"]) == (500, 831)
+    assert (ring["x"], ring["y"], ring["r"]) == (500, 500, 200)  # radius stays a share of the width
