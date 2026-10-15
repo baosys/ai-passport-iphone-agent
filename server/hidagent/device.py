@@ -4,6 +4,8 @@ import asyncio
 import logging
 import time
 
+from .vault import hidden
+
 log = logging.getLogger(__name__)
 
 
@@ -78,11 +80,13 @@ class Device:
                 reply = (await asyncio.wait_for(self._reader.readline(), timeout)).decode().strip()
             except (OSError, asyncio.TimeoutError) as e:
                 self._writer.close()  # the board reconnects on its own within a few seconds
-                raise DeviceError(f"board link lost during '{command[:30]}': {e!r}") from e
+                shown = command.split(" ")[0] if hidden() else command[:30]  # no secret, nor where it was tapped
+                raise DeviceError(f"board link lost during '{shown}': {e!r}") from e
         self._beat = time.time()  # last reply of any kind
         if command != "ping":
             self._last = self._beat  # last real command: the phone's idle time
-            log.debug("%s -> %s (%.0f ms)", command, reply, (time.time() - started) * 1000)
+            if not hidden():
+                log.debug("%s -> %s (%.0f ms)", command, reply, (time.time() - started) * 1000)
         if reply != "ok":
             raise DeviceError(reply or "board disconnected")
 

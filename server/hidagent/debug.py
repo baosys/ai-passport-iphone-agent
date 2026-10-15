@@ -8,6 +8,7 @@ from pathlib import Path
 class Trace:
     def __init__(self, root: Path | None):
         self.root, self.dir, self._n = root, None, 0
+        self.scrub = lambda record: record  # the agent sets its vault's: no secret value in any record
 
     @property
     def enabled(self) -> bool:
@@ -24,6 +25,7 @@ class Trace:
     def write(self, frame: bytes | None = None, **record) -> None:
         if not self.dir:
             return
+        record = self.scrub(record)
         self._n += 1
         if frame:
             record["frame"] = f"{self._n:03d}.jpg"

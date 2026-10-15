@@ -9,7 +9,7 @@ import math
 import re
 import time
 
-from . import shortcuts, vision
+from . import shortcuts, vault, vision
 from .debug import Trace
 from .device import DeviceError
 from .jev import NO, SURE, Jev
@@ -17,6 +17,7 @@ from .llm import LLM
 from .phone import Phone
 from .routines import Routines, asks, locate, look, patch, same, target
 from .screen import Screen, frame_size
+from .vault import Vault
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +30,10 @@ To open an app, write "Open <app name>": the agent opens apps through search in 
 through home screens. Going to the home screen is one fast step too.
 When the goal reads information in one app and sends it in another (e.g. look up the weather, then message it to
 someone), plan the reading first, with a step to note what was read, then the sending. One good source is
-enough for a summary: plan to read it once, not to compare many."""
+enough for a summary: plan to read it once, not to compare many.
+{NAME} in the goal (e.g. {WECHAT_PAY}) is a password stored on the computer that the agent enters itself: plan a
+step like "Enter {WECHAT_PAY}" where it is asked for, never its value. A password the goal names no {NAME} for is
+the user's to enter: plan to hand over to them there, never to guess it."""
 
 ACTOR_PROMPT = """You operate an iPhone through a mouse pointer and a hardware keyboard. You see the current screen.
 Reply in this format, nothing else:
@@ -87,6 +91,11 @@ measure the row spacing from two neighbouring numbers and swipe k times that spa
 Looking for an item in a list: scroll less than one screen at a time so nothing is skipped, and read every
 visible item. If you reached both ends of the list and the item is not there, stop with fail and name the
 closest options you saw; do not keep scrolling.
+Passwords: {NAME} in the goal (e.g. {WECHAT_PAY}) stands for a secret stored on the computer. You never see its
+value: never type the braces or guess it. Enter it with secret NAME into a focused text field, or with keypad NAME
+on a digit keypad that the app draws itself (e.g. WeChat Pay's), which ignores the keyboard. Enter each secret once;
+it shows only as dots. When a password, PIN or code is asked for and the goal names no {NAME} for it, or that
+secret is not stored, stop with ask and tell the user what to enter on the phone; never guess one.
 Only tap things you can actually see on this screenshot; never guess where a button might be.
 If you are unsure what an element does, tap it alone (one DO line) and check the result next round.
 Actions:
@@ -101,11 +110,16 @@ Actions:
   key COMBO                 (one of: enter esc backspace tab space up down left right, or a combo
                              joined with +: cmd+space, cmd+h, cmd+a, shift+tab)
   open NAME                 (open an app by name through search)
+  secret NAME               (type the stored secret {NAME} of the goal into the focused field)
+  keypad NAME X1 Y1 X2 Y2   (enter the stored secret {NAME} on an on-screen digit keypad of 4 rows of 3 keys:
+                             X1 Y1 is the top-left corner of the 1 key, X2 Y2 the bottom-right corner of the
+                             bottom-right key, next to 0; the agent presses the digits itself)
   note TEXT                 (keep facts read off the screen for later steps; does nothing on the phone)
   home | back | wait        (home: the home screen, by keyboard; back: a swipe in from the left edge)
   replan                    (the plan no longer fits the screen)
   done ANSWER               (the goal is reached; ANSWER is the result for the user)
   fail REASON
+  ask WHAT                  (hand over: stop and tell the user what to do on the phone, e.g. enter a password)
 
 Example:
 PAGE: Home screen
@@ -125,10 +139,11 @@ REMEMBERED = ("cue", "look", "page")  # what a routine keeps about a step beside
 ACTIONS = {"tap": ("x", "y"), "swipe": ("x1", "y1", "x2", "y2"), "scroll": ("x", "y", "dy"), "circle": ("x", "y", "r"),
            "path": ("points",),
            "type": ("text",), "key": ("combo",), "open": ("app",), "note": ("text",), "done": ("answer",),
-           "fail": ("reason",),
+           "fail": ("reason",), "ask": ("reason",), "secret": ("name",), "keypad": ("name", "x1", "y1", "x2", "y2"),
            "home": (), "back": (), "wait": (), "replan": ()}
 TEXT_ARGS = ("text", "combo", "app", "answer", "reason")
-NO_PHONE = ("note", "done", "fail")  # actions that do nothing on the phone
+NO_PHONE = ("note", "done", "fail", "ask")  # actions that do nothing on the phone
+FINAL = ("done", "fail", "ask")  # actions that end the task
 CYCLE_ACTIONS = ("tap", "back", "home", "open")  # moves that navigate; going round them is a loop
 # who decided a step, cheapest first: plain code (shortcuts), a remembered routine, Jev, the actor, the planner
 TIERS = ("code", "routine", "jev", "actor", "planner")
@@ -164,6 +179,17 @@ def parse_command(line: str) -> dict:
     keys = ACTIONS[name]
     if name == "key":
         return {"action": name, "combo": parse_combo(rest)}
+    if name in vault.ACTIONS:  # secret NAME, keypad NAME X1 Y1 X2 Y2: the name may come in braces
+        word, _, rest = rest.strip().partition(" ")
+        secret = word.strip("{}\"'").upper()
+        if not re.fullmatch(vault.PLACEHOLDER.pattern[2:-2], secret):
+            raise ValueError(f"{name} needs a secret NAME: {line[:100]}")
+        if name == "secret":
+            return {"action": name, "name": secret}
+        numbers = [int(float(n)) for n in re.findall(r"-?\d+(?:\.\d+)?", rest)]
+        if len(numbers) != 4:
+            raise ValueError(f"keypad needs NAME X1 Y1 X2 Y2: {line[:100]}")
+        return {"action": name, "name": secret, **dict(zip(keys[1:], numbers, strict=True))}
     if keys and keys[0] in TEXT_ARGS:
         return {"action": name, keys[0]: rest.strip().strip('"')}
     numbers = [int(float(n)) for n in re.findall(r"-?\d+(?:\.\d+)?", rest)]
@@ -223,11 +249,13 @@ class BlindError(RuntimeError):
 class Agent:
     def __init__(self, phone: Phone, screen: Screen, actor: LLM, planner: LLM, trace: Trace,
                  max_steps: int = 100, max_failures: int = 3,  # max_steps 0: until done, fail or stop
-                 routines: Routines | None = None, jev: Jev | None = None):
+                 routines: Routines | None = None, jev: Jev | None = None, vault: Vault | None = None):
         self.phone, self.screen, self.actor, self.planner = phone, screen, actor, planner
         self.routines = routines or Routines(None)
         self.jev = jev or Jev(None)
+        self.vault = vault or Vault({})
         self.trace = trace
+        self.trace.scrub = self.vault.scrub  # no secret value in any trace record
         self.max_steps, self.max_failures = max_steps, max_failures
         self.task, self.plan, self.steps = "", "", []
         self.shots: dict[int, bytes] = {}  # step index -> screenshot the model decided on
@@ -240,6 +268,7 @@ class Agent:
         self._routine: dict | None = None  # the remembered routine this task means
         self._asks = False  # the task wants an answer read off the screen
         self._jev_s = 0.0  # seconds Jev spent on the triage
+        self._entered: set[str] = set()  # secrets entered in this task: each once, a wrong password locks accounts
 
     @property
     def running(self) -> bool:
@@ -248,13 +277,18 @@ class Agent:
     def start(self, task: str) -> None:
         if self.running:
             raise RuntimeError("agent already running")
+        self.vault.load(task)
+        task = self.vault.redact(task)  # a password typed into the task: from here on only its {NAME}
         quick, rest = shortcuts.split(task)
         if rest and not self.screen.live:  # keyboard shortcuts alone work blind; the models need to see
             raise RuntimeError("no phone screen: start Screen Mirroring first")
         self.task, self.plan, self.steps, self.shots = task, "", [], {}
         self._quick, self._replayed, self._rest = quick, [], rest
-        self._routine, self._asks = self.routines.find(task), asks(task)
-        self._pointer, self._jev_s = (0.0, 0.0), 0.0
+        # a task with a secret is never replayed: an old routine may hold a password typed raw, and a payment
+        # needs a fresh look
+        self._routine = None if vault.names(task) else self.routines.find(task)
+        self._asks = asks(task)
+        self._pointer, self._jev_s, self._entered = (0.0, 0.0), 0.0, set()
         self.trace.start(task)
         self._job = asyncio.create_task(self._run())
 
@@ -288,7 +322,8 @@ class Agent:
             self._record(action="hiccup", reason="the mirror dropped and came back")
             await self.screen.settled()
         frame, started = self.screen.frame, time.time()
-        reply = await llm.chat(system, prompt, frame, max_tokens=max_tokens, temperature=temperature)
+        prompt = self.vault.redact(prompt)
+        reply = self.vault.redact(await llm.chat(system, prompt, frame, max_tokens=max_tokens, temperature=temperature))
         seconds = round(time.time() - started, 2)
         self.trace.write(frame, kind="llm", role=role, model=llm.model, prompt=prompt,
                          reply=reply, seconds=seconds)
@@ -349,7 +384,7 @@ class Agent:
         if not self.jev.enabled:
             return
         clauses = shortcuts.clauses(self.task)
-        remembered = [] if self._routine else self.routines.tasks()
+        remembered = [] if self._routine or vault.names(self.task) else self.routines.tasks()
         started = time.time()
         t = await self.jev.triage(self.task, clauses, remembered)
         self._jev_s = time.time() - started
@@ -362,7 +397,7 @@ class Agent:
             quick.append(act)
         self._quick, self._asks = quick, t.asks
         self._rest = "" if len(quick) == len(clauses) else "，".join(clauses[len(quick):])
-        if self._routine is None and t.routine:
+        if self._routine is None and t.routine and not vault.names(self.task):
             self._routine = self.routines.find(t.routine)
         if self._rest and not self.screen.live:
             raise BlindError("no phone screen: start Screen Mirroring first")
@@ -491,6 +526,8 @@ class Agent:
         last = self.steps[-1]
         if last["action"] != "done" or any(s["action"] == "note" for s in self.steps):
             return  # a task that carried notes typed what it read today: replaying that text would send stale news
+        if vault.names(self.task) or any(s["action"] in vault.ACTIONS for s in self.steps):
+            return  # a task with a secret (a payment): its taps would give the digits away, and it needs a look
         keep = []
         for i, s in enumerate(self.steps):
             if i < len(self._quick) or s["action"] not in ACTIONS or s["action"] in ("done", "fail", "replan", "wait"):
@@ -536,7 +573,7 @@ class Agent:
                 spots += _pointer_path(act)
                 self._pointer = spots[-1]
             self._record(act.pop("_shot"), **act)
-            if name in ("done", "fail"):
+            if name in FINAL:
                 return True
             if name == "note":
                 continue
@@ -654,7 +691,7 @@ class Agent:
                             for s in moves[-8:]) or "(none)"
         earlier = _trail(moves[:-8])
         notes = "\n".join(f"- {s['text']}" for s in self.steps if s["action"] == "note")[-6000:]
-        prompt = (f"Goal: {self.task}\n\nPlan:\n{self.plan}\n\n"
+        prompt = (f"Goal: {self.task}\n\n" + self._secrets_line() + f"Plan:\n{self.plan}\n\n"
                   + (f"Your notes so far (facts you read on earlier screens):\n{notes}\n\n" if notes else "")
                   + (f"Earlier steps (the page, then what you did there):\n{earlier}\n\n" if earlier else "")
                   + f"Recent actions:\n{history}\n\nThe screenshot is {w} pixels wide and {h} pixels tall. "
@@ -667,7 +704,7 @@ class Agent:
             except ValueError as e:
                 log.warning("unparseable actor reply (%s): %s", e, reply[:200])
                 continue
-            acts = [scale(a, 1000 / w, 1000 / h) for a in said]
+            acts = self._check_secrets([scale(a, 1000 / w, 1000 / h) for a in said])
             if self._missed() and _key(acts[0]) == _key(self._last_move()):  # same move that just did nothing
                 log.info("actor repeated an action that changed nothing; asking for another")
                 prompt += (f"\n\nYou just proposed {json.dumps(_key(said[0]))} again, but it changed nothing last "
@@ -677,6 +714,70 @@ class Agent:
             return [{**a, "_shot": frame} for a in acts]  # every action is drawn on the same screenshot
         raise ValueError(f"actor gave no valid action: {reply[:200]}")
 
+    def _secrets_line(self) -> str:
+        """For the actor: the goal's {NAME}s and whether each one can be entered (never their values)."""
+        if not (wanted := vault.names(self.task)):
+            return ""
+        state = lambda n: ("entered already" if n in self._entered else "stored" if self.vault.get(n)  # noqa: E731
+                           else "NOT stored: ask the user to enter it on the phone")
+        return "Secrets in the goal: " + ", ".join(f"{{{n}}} ({state(n)})" for n in wanted) + "\n\n"
+
+    def _check_secrets(self, acts: list[dict]) -> list[dict]:
+        """The round up to its first action that cannot enter its secret, which becomes an ask: the user enters it.
+
+        Checked before any action of the round runs, so a keypad that cannot go in is not followed by its Pay tap.
+        """
+        entered = set(self._entered)
+        for i, a in enumerate(acts):
+            keypad = a["action"] == "keypad"
+            wanted = [a["name"]] if a["action"] in vault.ACTIONS else vault.names(a["text"]) if a["action"] == "type" \
+                else []
+            for name in wanted:
+                if problem := self._secret_problem(name, entered, keypad):
+                    meta = {k: v for k, v in a.items() if k in ("thought", "thought_zh", "page")}
+                    return [*acts[:i], {**meta, "action": "ask", "reason": problem}]
+                entered.add(name)
+        return acts
+
+    def _secret_problem(self, name: str, entered: set[str], keypad: bool = False) -> str | None:
+        """Why the secret `name` cannot be entered now, for the user; None when it can."""
+        if name not in vault.names(self.task):  # a screen must not talk the actor into entering another secret
+            return f"The task names no {{{name}}}: enter that password on the phone yourself."
+        if name in entered:
+            return (f"{{{name}}} was entered once and is asked for again: check it and enter it on the phone "
+                    "yourself (a wrong payment password entered again and again locks the account).")
+        if (value := self.vault.get(name)) is None:
+            return (f"No stored secret {{{name}}}: enter it on the phone yourself, or set HIDAGENT_SECRET_{name} in "
+                    "server/.env, restart the server and run the task again.")
+        if keypad and not value.isdigit():
+            return f"{{{name}}} is not all digits, so it cannot go in on this keypad: enter it on the phone yourself."
+        if not keypad and not value.isascii():
+            return (f"{{{name}}} has characters the hardware keyboard cannot type: enter it on the phone "
+                    "yourself.")
+        return None
+
+    async def _type_secret(self, text: str) -> None:
+        """Type text whose {NAME}s are secrets, on the hardware keyboard only (nothing on the clipboard)."""
+        for name in vault.names(text):
+            if problem := self._secret_problem(name, self._entered):
+                raise ValueError(problem)
+            self._entered.add(name)  # counted even if typing fails half-way: no second try on its own
+            text = text.replace("{" + name + "}", self.vault.get(name))
+        await self.phone.type_secret(text)
+
+    async def _keypad(self, a: dict) -> None:
+        """Press the secret's digits on an on-screen keypad; the model gave only where the keypad is."""
+        if problem := self._secret_problem(a["name"], self._entered, keypad=True):
+            raise ValueError(problem)
+        self._entered.add(a["name"])
+        spots = vault.keypad(self.vault.get(a["name"]), (a["x1"] / 1000, a["y1"] / 1000, a["x2"] / 1000,
+                                                          a["y2"] / 1000))
+        with vault.hush():
+            for x, y in spots:
+                await self.phone.tap(x, y)
+            # off the keypad: left on the last key, the pointer would show the last digit in the next screenshot
+            await self.phone.point(*_pointer_path(a)[0])
+
     async def _do(self, a: dict) -> None:
         p = lambda k: a[k] / 1000  # noqa: E731
         match a["action"]:
@@ -685,8 +786,11 @@ class Agent:
             case "scroll": await self.phone.wheel(p("x"), p("y"), p("dy"))
             case "path": await self.phone.drag([(x / 1000, y / 1000) for x, y in a["points"]])
             case "circle": await self.phone.drag(circle(p("x"), p("y"), p("r"), self.screen.aspect))
+            case "type" if vault.names(a["text"]): await self._type_secret(a["text"])
             case "type": await self.phone.type(a["text"])
             case "key": await self.phone.key(a["combo"])
+            case "secret": await self._type_secret("{" + a["name"] + "}")
+            case "keypad": await self._keypad(a)
             case "open": await self.phone.open_app(shortcuts.search_term(a["app"]))
             case "home": await self.phone.go_home()
             case "back": await self.phone.go_back()
@@ -717,7 +821,7 @@ def _trail(steps: list[dict], most: int = 40) -> str:
         if "plan" in s or s["action"] == "note":
             continue
         what = f"open {s['app']}" if s["action"] == "open" else f"key {s['combo']}" if s["action"] == "key" \
-            else s["action"]
+            else f"{s['action']} {{{s['name']}}}" if s["action"] in vault.ACTIONS else s["action"]
         line = f"- {_where(s)}{what}"
         if lines and lines[-1][0] == line:
             lines[-1][1] += 1
@@ -761,6 +865,8 @@ def _pointer_path(act: dict) -> list[tuple[float, float]]:
         case "path": return [f(*p) for p in act["points"]]
         case "circle": return [f(act["x"] + act["r"], act["y"])]
         case "back": return [(0.005, 0.45), (0.6, 0.45)]
+        case "keypad":  # where it rests after the digits: just above the keypad, the same whatever they were
+            return [((act["x1"] + act["x2"]) / 2000, max(0.02, min(act["y1"], act["y2"]) / 1000 - 0.05))]
         case _: return []
 
 

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import textinput, vision
 from .device import Device, DeviceError
+from .vault import hidden, hush
 
 log = logging.getLogger(__name__)
 
@@ -202,12 +203,15 @@ class Phone:
         found = before and after and (vision.pointer(before, after, (x, y), shift)  # near the target first,
                                       or vision.pointer(before, after, (0.5, 0.5), shift, reach=(0.5, 0.5)))  # anywhere
         if not found:
-            log.debug("aim (%.3f, %.3f): pointer not found (%s)", x, y,
-                      "no new frame after the nudge" if not after else "no pointer-sized change near the target")
+            if not hidden():  # a secret's keypad taps would give its digits away
+                log.debug("aim (%.3f, %.3f): pointer not found (%s)", x, y,
+                          "no new frame after the nudge" if not after else "no pointer-sized change near the target")
             return
         fx, fy = found
-        log.debug("aim (%.3f, %.3f): pointer at (%.3f, %.3f)", x, y, fx, fy)
-        if max(abs(fx - x), abs(fy - y)) <= MAX_MISS:  # learn from normal drift only, never from a stray reading
+        if not hidden():
+            log.debug("aim (%.3f, %.3f): pointer at (%.3f, %.3f)", x, y, fx, fy)
+        # learn from normal drift only, never from a stray reading, and never from a secret's taps (saved in order)
+        if max(abs(fx - x), abs(fy - y)) <= MAX_MISS and not hidden():
             self._seen["x"].append((self._fix(x, "x"), fx))
             self._seen["y"].append((self._fix(y, "y"), fy))
             self._save()
@@ -306,6 +310,13 @@ class Phone:
                 self._no_wheel = True
         for step in wheel_steps(round(abs(dy) / WHEEL_SCREEN)):
             await self.device.send(f"scroll {sign * step} 0")
+
+    async def type_secret(self, text: str) -> None:
+        """Type a secret on the hardware keyboard only: never through the clipboard or the relay page."""
+        if not text.isascii():
+            raise ValueError("a secret with non-ASCII characters cannot be typed on the hardware keyboard")
+        with hush():
+            await self.device.send(f"type {text}")
 
     async def type(self, text: str) -> None:
         """ASCII goes straight to the keyboard. Anything else (Chinese) is pasted exactly: from this computer's

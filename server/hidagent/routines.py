@@ -21,6 +21,8 @@ from pathlib import Path
 from PIL import Image, ImageChops
 
 from .shortcuts import POLITE
+from .vault import ACTIONS as SECRET_ACTIONS
+from .vault import names
 
 log = logging.getLogger(__name__)
 
@@ -149,6 +151,9 @@ class Routines:
     def learn(self, task: str, steps: list[dict], answer: str) -> None:
         """Remember the steps (actions with "cue" patches for the ones that were checked on screen)."""
         if not steps:
+            return
+        if any(s["action"] in SECRET_ACTIONS for s in steps) or names(task):
+            log.info("routines: not learning %r: it enters a secret", task)
             return
         old = self.data.get(normalize(task), {})
         self.data[normalize(task)] = {"task": task, "steps": steps, "answer": answer,

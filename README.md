@@ -220,6 +220,26 @@ Set in `server/.env` (see [`.env.example`](server/.env.example)):
 | `HIDAGENT_PASTE` | on when the Mac is signed in to iCloud | `1` / `0` forces pasting Chinese through Universal Clipboard on / off |
 | `HIDAGENT_RELAY_HOST` | the address the phone mirrors to | Address Safari opens for the Chinese text relay |
 | `HIDAGENT_SHORTCUT_BUTTON` | `3` | Mouse button that runs the paste Shortcut; `0` turns it off |
+| `HIDAGENT_SECRET_<NAME>` | — | A password the agent may enter as `{NAME}`, see [Passwords](#passwords) |
+| `HIDAGENT_KEYCHAIN_SECRETS` | — | Comma-separated Keychain names to load at start, so they are hidden even when typed into a task |
+
+### Passwords
+
+Never type a password into a task: the models, the traces and the routines would all see it. Store it on the Mac
+instead and name it in the task as `{NAME}`:
+
+```bash
+HIDAGENT_SECRET_WECHAT_PAY=123456          # in server/.env, or in the macOS Keychain:
+security add-generic-password -s hidagent -a WECHAT_PAY -w
+```
+
+A task such as *"Send Alice ¥1 on WeChat and pay with {WECHAT_PAY}"* keeps the placeholder all the way through. The
+actor answers `secret WECHAT_PAY` to type it into the focused field, or `keypad WECHAT_PAY X1 Y1 X2 Y2` for a digit
+keypad an app draws itself (WeChat Pay's): it gives only where the keypad is and the server taps each digit. Each
+secret is entered at most once per task, only if the task names it, and no command or tap of it is logged. A task
+that needs a password with nothing stored stops and hands over (*"Your turn"*) so you enter it on the phone. Any
+stored value that turns up in text is replaced by its placeholder before it reaches a model, a trace or a log, and
+tasks with secrets are never remembered as routines.
 
 ### Local model (optional)
 

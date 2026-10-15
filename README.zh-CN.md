@@ -201,6 +201,23 @@ API：`GET /api/mirror`（状态和学到的点击位置），`POST /api/mirror`
 | `HIDAGENT_PASTE` | Mac 登录 iCloud 时开启 | 设为 `1` / `0` 强制开启 / 关闭通过通用剪贴板粘贴中文 |
 | `HIDAGENT_RELAY_HOST` | 手机投屏连接到的地址 | 中文文本中转时 Safari 打开的地址 |
 | `HIDAGENT_SHORTCUT_BUTTON` | `3` | 运行粘贴快捷指令的鼠标键；设为 `0` 关闭 |
+| `HIDAGENT_SECRET_<NAME>` | — | Agent 可以按 `{NAME}` 输入的密码，见[密码](#密码) |
+| `HIDAGENT_KEYCHAIN_SECRETS` | — | 启动时就读取的钥匙串名称（逗号分隔），这样即使直接写进任务里也会被隐藏 |
+
+### 密码
+
+不要把密码写进任务：模型、调试记录和记住的做法都会看到它。把它存在 Mac 上，在任务里写成 `{NAME}`：
+
+```bash
+HIDAGENT_SECRET_WECHAT_PAY=123456          # 写在 server/.env 里，或者存进 macOS 钥匙串：
+security add-generic-password -s hidagent -a WECHAT_PAY -w
+```
+
+像 *"微信给张三转账 1 元，支付密码 {WECHAT_PAY}"* 这样的任务，从头到尾只出现占位符。执行模型回答 `secret WECHAT_PAY`
+就把密码打进当前输入框；遇到 App 自己画的数字键盘（比如微信支付），回答 `keypad WECHAT_PAY X1 Y1 X2 Y2`，只给出键盘的位置，
+由服务端逐个点数字。每个密码每个任务最多输入一次，而且只有任务里写了它才会输入；输入时的命令和点击都不写日志。需要密码却没有
+存的任务会停下来交给你（*"等你操作"*），由你在手机上输入。存着的密码如果出现在文字里，在发给模型、写进调试记录或日志之前都会
+换成占位符；带密码的任务不会被记成做法。
 
 ### 本地模型（可选）
 

@@ -20,11 +20,15 @@ from .phone import Phone
 from .relay import Relay
 from .routines import Routines
 from .screen import Screen
+from .vault import Vault
 
 DATA_DIR = Path(os.environ.get("HIDAGENT_DATA", Path.home() / ".hidagent"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DEBUG = os.environ.get("HIDAGENT_DEBUG") == "1"
 
+vault = Vault.from_env()  # HIDAGENT_SECRET_* (and Keychain items) that tasks name as {NAME}
+vault.load()
+vault.guard_logs()
 device = Device()
 AIRPLAY_NAME = os.environ.get("AIRPLAY_NAME", "iPhone Agent")
 screen = Screen(AIRPLAY_NAME, state=DATA_DIR / "receiver.json")
@@ -33,7 +37,7 @@ phone = Phone(device, DATA_DIR / "calibration.json", screen, relay=relay)
 agent = Agent(phone, screen, LLM.from_env("ACTOR"), LLM.from_env("PLANNER"),
               Trace(DATA_DIR / "traces" if DEBUG else None),
               max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)), routines=Routines(DATA_DIR / "routines.json"),
-              jev=Jev.from_env())
+              jev=Jev.from_env(), vault=vault)
 mirror = Mirror(phone, screen, agent.actor, DATA_DIR / "mirror.json", AIRPLAY_NAME,
                 busy=lambda: agent.running and not agent.blind)  # a task waiting for the mirror lets it reconnect
 
