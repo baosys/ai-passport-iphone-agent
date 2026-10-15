@@ -5,7 +5,7 @@ import pytest
 
 import hidagent.phone as phone_module
 from hidagent import textinput, vision
-from hidagent.phone import EDGE_PUSH, Phone, wheel_steps
+from hidagent.phone import EDGE_PUSH, Phone, wheel_steps, wheel_units
 
 
 class FakeDevice:
@@ -72,9 +72,21 @@ def test_the_board_scrolls_smoothly_in_one_command_without_pressing(tmp_path):
     phone, device = make_phone(tmp_path)
     asyncio.run(phone.wheel(0.5, 0.5, 0.2))
     assert "press" not in device.sent
-    assert device.sent[-1] == "wheel 50 428"
+    assert device.sent[-1] == "wheel 8 800"
     asyncio.run(phone.wheel(0.5, 0.5, -3))  # never more than WHEEL_MOST at once
-    assert device.sent[-1] == "wheel -112 650"
+    assert device.sent[-1] == "wheel -13 1300"
+    asyncio.run(phone.wheel(0.5, 0.5, 0.04))  # iOS needs 4 units to move at all
+    assert device.sent[-1] == "wheel 4 400"
+    sent = len(device.sent)
+    asyncio.run(phone.wheel(0.5, 0.5, 0.01))  # too small to scroll
+    assert len(device.sent) == sent
+
+
+@pytest.mark.parametrize("dy", [i / 100 for i in range(3, 46)])
+def test_wheel_units_follow_the_measured_curve(dy):
+    units = wheel_units(dy)
+    assert 4 <= units <= 14 and units == wheel_units(-dy)
+    assert wheel_units(dy + 0.01) >= units
 
 
 def test_older_firmware_scrolls_report_by_report(tmp_path):

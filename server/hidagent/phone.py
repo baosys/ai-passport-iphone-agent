@@ -50,10 +50,27 @@ SHORTCUT_BUTTON = int(os.environ.get("HIDAGENT_SHORTCUT_BUTTON", 3))
 SHORTCUT_FETCH = 4.0    # seconds for the Shortcut to start and fetch /clip
 SHORTCUT_COPY = 0.6     # seconds from the fetch until the Shortcut has copied the text
 SHORTCUT_RETRY = 600    # seconds without trying the Shortcut after it did not fetch
-WHEEL_SCREEN = 0.004    # screen heights the content moves per wheel unit (measured: 30 units, 12%)
+# wheel units -> screen heights iOS moves the content when they are spread over WHEEL_UNIT_MS each (measured in
+# Settings). iOS speeds the wheel up, so the move grows faster than the units, and fewer than 4 units do nothing.
+WHEEL_CURVE = ((4, 0.05), (5, 0.076), (6, 0.11), (7, 0.15), (8, 0.198), (10, 0.29), (12, 0.38), (14, 0.48))
+WHEEL_UNIT_MS = 100     # milliseconds per wheel unit: an unhurried finger; faster goes much further
 WHEEL_MOST = 0.45       # screen heights one scroll moves at most
-WHEEL_MS = (250, 650)   # milliseconds a scroll takes: a short one, and one of WHEEL_MOST
-WHEEL_STEP = 6          # older firmware (no wheel command): wheel units per scroll report at full speed
+WHEEL_SCREEN = 0.004    # older firmware (no wheel command): screen heights per unit (measured: 30 units, 12%)
+WHEEL_STEP = 6          # older firmware: wheel units per scroll report at full speed
+
+
+def wheel_units(dy: float) -> int:
+    """Wheel units that move the content about |dy| screen heights, read off WHEEL_CURVE; 0 for under half the
+    smallest move."""
+    dy = min(abs(dy), WHEEL_MOST)
+    (u0, d0), *rest = WHEEL_CURVE
+    if dy < d0:
+        return u0 if dy >= d0 / 2 else 0
+    for u1, d1 in rest:
+        if dy <= d1:
+            return round(u0 + (u1 - u0) * (dy - d0) / (d1 - d0))
+        u0, d0 = u1, d1
+    return u0
 
 
 def wheel_steps(units: int) -> list[int]:
@@ -269,26 +286,25 @@ class Phone:
 
     async def wheel(self, x: float, y: float, dy: float) -> None:
         """Scroll the content under (x, y) by about dy of the screen height (> 0: further down) with the wheel,
-        which presses nothing, unlike a swipe that may open a long-press menu. iOS moves the content about
-        WHEEL_SCREEN screens per wheel unit. The board speeds up and slows down again like a finger, in well
-        under a second; older firmware gets the same curve in coarser steps, one command per report."""
+        which presses nothing, unlike a swipe that may open a long-press menu. The board speeds up and slows down
+        again like a finger, WHEEL_UNIT_MS per unit (a scroll of WHEEL_MOST takes about 1.3 s); older firmware
+        gets a similar curve in coarser steps, one command per report."""
         dy = max(-WHEEL_MOST, min(WHEEL_MOST, dy))
-        units = round(dy / WHEEL_SCREEN)
-        if not units:
+        sign = 1 if dy > 0 else -1
+        if not wheel_units(dy):
             return
         await self.point(x, y)
         if not self._no_wheel:
-            ms = round(WHEEL_MS[0] + (WHEEL_MS[1] - WHEEL_MS[0]) * abs(dy) / WHEEL_MOST)
+            units = wheel_units(dy)
             try:
-                await self.device.send(f"wheel {units} {ms}")
+                await self.device.send(f"wheel {sign * units} {units * WHEEL_UNIT_MS}")
                 return
             except DeviceError as e:
                 if not str(e).startswith("err unknown command"):
                     raise
                 log.info("the board has no 'wheel' command (older firmware): scrolling report by report")
                 self._no_wheel = True
-        sign = 1 if units > 0 else -1
-        for step in wheel_steps(abs(units)):
+        for step in wheel_steps(round(abs(dy) / WHEEL_SCREEN)):
             await self.device.send(f"scroll {sign * step} 0")
 
     async def type(self, text: str) -> None:
