@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -263,6 +263,15 @@ def agent_clear():
     except RuntimeError as e:
         raise HTTPException(409, str(e)) from e
     return {"ok": True}
+
+
+@app.get("/clip")
+def relay_clip():
+    """The text the phone's paste Shortcut copies, served once (relay.py)."""
+    text = phone.relay.take()
+    if text is None:
+        raise HTTPException(404)
+    return PlainTextResponse(text, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/{code}")

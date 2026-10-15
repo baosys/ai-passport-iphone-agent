@@ -5,6 +5,10 @@ homophones. Universal Clipboard needs this computer signed in to the phone's App
 the text on a one-time page: the phone opens Safari, types the page's address (digits only, which the pinyin
 keyboard leaves alone in the address bar), taps the page once, which copies the text, and swipes back to the app
 to paste it. About ten seconds for any length, every character exact.
+
+Faster, once set up on the phone: a Shortcut that fetches http://<this computer>.local:8890/clip and copies the
+result, run by a mouse button the board clicks (AssistiveTouch maps the button to the Shortcut). The text is held
+for one fetch only; about a second, without leaving the app.
 """
 
 import asyncio
@@ -55,6 +59,8 @@ class Relay:
         self.offered = 0.0
         self.loaded = asyncio.Event()
         self.copied = asyncio.Event()
+        self.clip, self.clip_at = "", 0.0  # text for the Shortcut's single fetch of /clip
+        self.fetched = asyncio.Event()
 
     def offer(self, text: str) -> str | None:
         """Hold `text` on a new one-time page; its address as typed into Safari, or None without a network."""
@@ -83,3 +89,16 @@ class Relay:
             self.text = ""
             self.copied.set()
         return True
+
+    def hold(self, text: str) -> None:
+        """Hold `text` for the next fetch of /clip."""
+        self.clip, self.clip_at = text, time.time()
+        self.fetched.clear()
+
+    def take(self) -> str | None:
+        """The held text, once; None when nothing is held or it expired."""
+        text, self.clip = self.clip, ""
+        if not text or time.time() - self.clip_at > EXPIRES:
+            return None
+        self.fetched.set()
+        return text

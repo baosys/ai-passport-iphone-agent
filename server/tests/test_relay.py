@@ -29,3 +29,15 @@ def test_an_offer_expires(monkeypatch):
     code = relay.offer("你好").split("/")[1]
     monkeypatch.setattr(relay_module, "EXPIRES", 0)
     assert relay.page(code) is None and not relay.done(code, True)
+
+
+def test_the_shortcut_text_is_fetched_once(monkeypatch):
+    relay = Relay(8890)
+    assert relay.take() is None
+    relay.hold("还款")
+    assert not relay.fetched.is_set()
+    assert relay.take() == "还款" and relay.fetched.is_set()
+    assert relay.take() is None
+    relay.hold("你好")
+    monkeypatch.setattr(relay_module, "EXPIRES", -1)
+    assert relay.take() is None

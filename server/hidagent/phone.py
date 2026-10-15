@@ -9,13 +9,14 @@ work for any frame size.
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 from collections import deque
 from pathlib import Path
 
 from . import textinput, vision
-from .device import Device
+from .device import Device, DeviceError
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,11 @@ PASTE_RETRY = 600       # seconds without trying to paste after a paste changed 
 PRESS_SETTLE = 0.08     # seconds between pressing and moving, so iOS sees a touch before it moves, not a tap
 RELAY_LOAD = 8.0        # seconds for Safari to load the relay page
 RELAY_COPY = 3.0        # seconds for the page to report its copy after the tap
+# mouse button AssistiveTouch maps to the paste Shortcut; 0 turns the Shortcut off
+SHORTCUT_BUTTON = int(os.environ.get("HIDAGENT_SHORTCUT_BUTTON", 3))
+SHORTCUT_FETCH = 4.0    # seconds for the Shortcut to start and fetch /clip
+SHORTCUT_COPY = 0.6     # seconds from the fetch until the Shortcut has copied the text
+SHORTCUT_RETRY = 600    # seconds without trying the Shortcut after it did not fetch
 
 
 class Phone:
@@ -56,6 +62,7 @@ class Phone:
         self._moves = 0
         self._link = 0  # device.links when the pointer was last homed
         self._no_paste = 0.0  # when a paste last changed nothing
+        self._no_shortcut = 0.0  # when the paste Shortcut last did not run (inf: the board has no such button)
         # where the pointer really landed (seen on screen) for the screen fraction we aimed at, per axis;
         # a straight-line fit through them corrects every later move, so taps get better as the agent works
         self._seen = {axis: deque(map(tuple, (saved or {}).get("seen", {}).get(axis, [])), maxlen=12)
@@ -239,12 +246,12 @@ class Phone:
 
     async def type(self, text: str) -> None:
         """ASCII goes straight to the keyboard. Anything else (Chinese) is pasted exactly: from this computer's
-        clipboard (Universal Clipboard), else copied in Safari from a page this server offers (relay.py). Pinyin,
-        which may pick wrong homophones, is the last resort."""
+        clipboard (Universal Clipboard), else copied by the phone's paste Shortcut or in Safari from a page this
+        server offers (relay.py). Pinyin, which may pick wrong homophones, is the last resort."""
         if text.isascii():
             await self.device.send(f"type {text}")
             return
-        if await self._paste(text) or await self._relay(text):
+        if await self._paste(text) or await self._shortcut(text) or await self._relay(text):
             return
         await self._pinyin(text)
 
@@ -270,6 +277,40 @@ class Phone:
             return True
         log.info("paste changed nothing on screen; no Universal Clipboard for %d s", PASTE_RETRY)
         self._no_paste = time.time()
+        return False
+
+    async def _shortcut(self, text: str) -> bool:
+        """Click the mouse button AssistiveTouch runs the paste Shortcut with; it fetches `text` from /clip and
+        copies it, the app keeps its focus, and cmd+v pastes. False when the Shortcut did not fetch (not set up)."""
+        if not SHORTCUT_BUTTON or self.relay is None or time.time() - self._no_shortcut < SHORTCUT_RETRY:
+            return False
+        self.relay.hold(text)
+        try:
+            await self.device.send(f"button {SHORTCUT_BUTTON}")
+        except DeviceError as e:
+            if not str(e).startswith("err unknown command"):
+                raise
+            log.info("the board has no 'button' command (older firmware): no paste Shortcut")
+            self._no_shortcut = math.inf
+            return False
+        try:
+            await asyncio.wait_for(self.relay.fetched.wait(), SHORTCUT_FETCH)
+        except asyncio.TimeoutError:
+            self.relay.clip = ""
+            log.info("paste Shortcut did not fetch /clip; not trying it for %d s", SHORTCUT_RETRY)
+            self._no_shortcut = time.time()
+            return False
+        await asyncio.sleep(SHORTCUT_COPY)
+        if self.screen is None or not self.screen.live:  # cannot check: trust it
+            await self.device.send("key cmd+v")
+            return True
+        for _ in range(2):  # a Shortcut still finishing may take the first cmd+v
+            before = self.screen.frame
+            await self.device.send("key cmd+v")
+            await self.screen.settled(quiet=0.3, least=0.3, most=2.0)
+            if vision.changed(before, self.screen.frame, spots=PASTE_SPOTS):
+                return True
+            log.info("paste Shortcut: the paste changed nothing")
         return False
 
     async def _relay(self, text: str) -> bool:

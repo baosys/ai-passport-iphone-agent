@@ -204,8 +204,14 @@ def test_a_tap_near_the_bottom_goes_down_to_the_edge_then_a_short_way_up(tmp_pat
 
 
 class FakeRelay:
-    def __init__(self):
-        self.loaded, self.copied = asyncio.Event(), asyncio.Event()
+    def __init__(self, shortcut=False):
+        self.loaded, self.copied, self.fetched = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        self.shortcut, self.clip = shortcut, ""
+
+    def hold(self, text):
+        self.clip = text
+        if self.shortcut:  # the phone's Shortcut fetches it
+            self.fetched.set()
 
     def offer(self, text):
         self.text = text
@@ -216,6 +222,7 @@ class FakeRelay:
 
 def relay_phone(tmp_path, monkeypatch, pasted):
     monkeypatch.setenv("HIDAGENT_PASTE", "0")
+    monkeypatch.setattr(phone_module, "SHORTCUT_FETCH", 0)
     monkeypatch.setattr(vision, "changed", lambda *a, **k: next(pasted))
     phone, device = make_phone(tmp_path)
     phone.screen, phone.relay = FakeScreen(), FakeRelay()
@@ -239,7 +246,7 @@ def test_chinese_is_copied_in_safari_and_pasted_back_in_the_app(tmp_path, monkey
     asyncio.run(phone.type("HSBC Pulse信用卡如何还款"))
     assert phone.relay.text == "HSBC Pulse信用卡如何还款"
     assert calls == ["open Safari", "tap 0.5 0.45 blind", "previous app"]  # no field tapped before: none to tap again
-    assert device.sent == ["key cmd+l", "type 10.0.0.2:8890/123456", "key enter", "key cmd+v"]
+    assert device.sent == ["button 3", "key cmd+l", "type 10.0.0.2:8890/123456", "key enter", "key cmd+v"]
 
 
 def test_the_field_is_tapped_again_after_the_round_trip(tmp_path, monkeypatch):
@@ -247,6 +254,38 @@ def test_the_field_is_tapped_again_after_the_round_trip(tmp_path, monkeypatch):
     phone.last_tap = (0.4, 0.1)
     asyncio.run(phone.type("你好"))
     assert calls[-1] == "tap 0.4 0.1" and device.sent[-2:] == ["key cmd+v", "key cmd+v"]
+
+
+def test_the_paste_shortcut_copies_without_leaving_the_app(tmp_path, monkeypatch):
+    phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([True]))
+    phone.relay.shortcut = True
+    monkeypatch.setattr(phone_module, "SHORTCUT_FETCH", 1)
+    monkeypatch.setattr(phone_module, "SHORTCUT_COPY", 0)
+    asyncio.run(phone.type("华盛顿未来一周"))
+    assert phone.relay.clip == "华盛顿未来一周" and calls == []
+    assert device.sent == ["button 3", "key cmd+v"]
+
+
+def test_a_shortcut_that_never_runs_is_not_tried_again_soon(tmp_path, monkeypatch):
+    phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([True, True]))
+    asyncio.run(phone.type("你好"))
+    assert device.sent[0] == "button 3" and calls[0] == "open Safari" and phone.relay.clip == ""
+    device.sent.clear()
+    asyncio.run(phone.type("你好"))
+    assert "button 3" not in device.sent
+
+
+def test_older_firmware_without_the_button_command_falls_back_to_the_relay(tmp_path, monkeypatch):
+    phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([True]))
+
+    async def send(line):
+        if line.startswith("button"):
+            raise phone_module.DeviceError("err unknown command")
+        device.sent.append(line)
+
+    device.send = send
+    asyncio.run(phone.type("你好"))
+    assert calls[0] == "open Safari" and phone._no_shortcut == float("inf")
 
 
 def test_no_universal_clipboard_without_icloud(monkeypatch):
