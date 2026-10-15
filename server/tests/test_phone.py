@@ -105,6 +105,23 @@ def test_open_app_presses_cmd_space_again_when_search_did_not_open(tmp_path, mon
     assert device.sent[3:] == ["key cmd+space", "key cmd+space", "key cmd+a", "type weixin", "key space", "key enter"]
 
 
+def test_open_app_leaves_a_widget_page_that_ignores_cmd_space(tmp_path, monkeypatch):
+    monkeypatch.setattr(phone_module, "HOME_SETTLE", 0)
+    seen = iter([False, False, True])
+    monkeypatch.setattr(vision, "changed", lambda *a, **k: next(seen))
+    phone, device = make_phone(tmp_path)
+    phone.screen = FakeScreen()
+    swipes = []
+
+    async def swipe(*args, **kwargs):
+        swipes.append(args)
+
+    phone.swipe = swipe
+    asyncio.run(phone.open_app("weixin"))
+    assert swipes == [(0.9, 0.75, 0.1, 0.75)]
+    assert device.sent[3:] == ["key cmd+space"] * 3 + ["key cmd+a", "type weixin", "key space", "key enter"]
+
+
 def test_ascii_text_is_typed_directly(tmp_path):
     phone, device = make_phone(tmp_path)
     asyncio.run(phone.type("hello"))

@@ -344,13 +344,20 @@ class Phone:
         already in the field (pasted, or its pinyin taken by type): a space after it would be a real one, and
         "小红书 " puts the app's page in Settings on top instead of the app."""
         await self.go_home()
-        for _ in range(2):  # once more if iOS ignored it
+        for attempt in range(3):  # once more if iOS ignored it
             before = self.screen.frame if self.screen is not None else None
             await self.device.send("key cmd+space")
             await self._still()
             if before is None or not self.screen.live or vision.changed(before, self.screen.frame):
                 break
-            log.info("open %s: search did not open; pressing cmd+space again", name)
+            if attempt == 1:
+                # a home page holding only widgets ignores both cmd+space and cmd+h (seen with Screen Time and
+                # Batteries widgets: the agent opened nothing for five minutes); the next page takes them
+                log.info("open %s: search did not open twice; swiping to the next home page", name)
+                await self.swipe(0.9, 0.75, 0.1, 0.75, hold=False)
+                await self._still()
+            else:
+                log.info("open %s: search did not open; pressing cmd+space again", name)
         await self.device.send("key cmd+a")  # search may come back with an earlier query: type over it
         if name.isascii():
             await self.device.send(f"type {name}")
