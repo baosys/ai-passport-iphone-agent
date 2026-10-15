@@ -71,7 +71,8 @@ key enter. To send a chat message (WeChat, Messages, ...), type it and then key 
 Type the whole message in ONE type action on one line (separate points with ；or ; — a line break would send it
 early), composed from your notes. After key enter, check that it shows as a sent bubble in the chat.
 Chinese text is pasted exactly, any length (the phone may briefly open Safari to copy it; it comes back to the
-field by itself). Tap the field first, type, then check the text in the field before key enter.
+field by itself). Tap the field first, then type. A text that was typed is in the field whole, even when the
+field shows only its start or end: never type its rest or any part of it again; key enter to send it.
 An app opens where it was left: an open sheet or detail page means the app is already open; close it (its X or
 back) instead of opening the app again. Right after open NAME the app on screen IS that app, even when its page
 looks like another one (a chat with an assistant inside 小红书 looks like WeChat): go back inside it, never open
@@ -623,8 +624,7 @@ class Agent:
                   "changed", "tier")
         effect = {True: " -> screen changed", False: " -> screen did NOT change"}
         w, h = frame_size(self.screen.frame) or (1000, 1000)
-        history = "\n".join(json.dumps(scale({k: v for k, v in s.items() if k not in hidden}, w / 1000, h / 1000))[:300]
-                            + effect.get(s.get("changed"), "")
+        history = "\n".join(_line(s, hidden, w, h) + effect.get(s.get("changed"), "")
                             for s in self.steps[-8:] if "plan" not in s and s["action"] != "note") or "(none)"
         notes = "\n".join(f"- {s['text']}" for s in self.steps if s["action"] == "note")[-6000:]
         prompt = (f"Goal: {self.task}\n\nPlan:\n{self.plan}\n\n"
@@ -664,6 +664,16 @@ class Agent:
             case "back": await self.phone.go_back()
             case "wait" | "note": pass
             case other: raise ValueError(f"unknown action {other!r}")
+
+
+def _line(step: dict, hidden: tuple, w: int, h: int) -> str:
+    """One past action for the actor. Typed text is shown whole and marked as typed: cut short, it looked
+    unfinished, and the actor typed the rest again."""
+    shown = scale({k: v for k, v in step.items() if k not in hidden}, w / 1000, h / 1000)
+    if step["action"] == "type":
+        return (json.dumps(shown, ensure_ascii=False) + f" -> all {len(step['text'])} characters are in the field "
+                "exactly; a long text shows only in part there, so never type any of it again")
+    return json.dumps(shown, ensure_ascii=False)[:300]
 
 
 def _page(step: dict) -> dict:

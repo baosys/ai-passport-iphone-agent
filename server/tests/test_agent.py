@@ -317,3 +317,29 @@ def test_a_task_waits_for_a_dropped_mirror_and_lets_it_reconnect(monkeypatch):
     monkeypatch.setattr(agent_module, "BLIND_WAIT", 0.1)
     with pytest.raises(BlindError):
         asyncio.run(agent._ask("actor", agent.actor, "", ""))
+
+
+def test_typed_chinese_is_shown_whole_and_marked_as_typed():
+    import asyncio
+
+    from hidagent.agent import Agent
+    from hidagent.debug import Trace
+
+    class Screen:
+        live, frame, aspect = True, b"jpeg", 0.46
+
+    class Actor:
+        model = "fake"
+        def __init__(self):
+            self.prompts = []
+        async def chat(self, system, text, image=None, max_tokens=600, temperature=0):
+            self.prompts.append(text)
+            return "THINK: send\nDO: key enter"
+
+    text = "更正：汇丰 Pulse 信用卡可以用人民币还款。" * 8  # far past what one history line used to keep
+    actor = Actor()
+    agent = Agent(phone=None, screen=Screen(), actor=actor, planner=actor, trace=Trace(None))
+    agent.steps = [{"action": "type", "text": text, "changed": True}]
+    asyncio.run(agent._next_actions())
+    assert text in actor.prompts[0]
+    assert f"all {len(text)} characters are in the field exactly" in actor.prompts[0]
