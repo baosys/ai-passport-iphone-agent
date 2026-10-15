@@ -35,5 +35,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ai-passport-firmware-${{ github.sha }}
-          path: hardware/ai_passport/**/FoloToy-AI-Passport-full.bin
+          # full: flash at 0x0 (first install); app: flash at 0x10000 (update, keeps pairing and Wi-Fi)
+          path: |
+            hardware/ai_passport/**/FoloToy-AI-Passport-full.bin
+            hardware/ai_passport/build/FoloToy-AI-Passport.bin
           if-no-files-found: error
