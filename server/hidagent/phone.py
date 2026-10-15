@@ -405,6 +405,7 @@ class Phone:
         await self.screen.settled(quiet=0.3, least=0.5, most=2.0)
         if field is not None:  # the field may lose its focus on the way: tap it again
             await self.tap(*field)
+            await self.screen.settled(quiet=0.3, least=0.3, most=1.5)  # the keyboard comes back up
         if not copied:
             return False
         if not vision.same_screen(start, self.screen.frame):  # e.g. it was typing in Safari itself
