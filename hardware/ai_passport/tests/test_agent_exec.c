@@ -199,6 +199,24 @@ static void test_drag_keeps_button_down(void)
     assert(s_fake.slept_ms >= 60);
 }
 
+static void test_other_buttons(void)
+{
+    reset();
+    assert(run("button 3"));
+    assert(s_fake.mouse_count == 2);
+    assert(s_fake.mouse[0][0] == 0x04 && s_fake.mouse[1][0] == 0);
+    assert(s_fake.slept_ms >= 60);
+
+    reset();
+    assert(run("press"));
+    assert(run("button 2"));
+    assert(s_fake.mouse[1][0] == (AGENT_MOUSE_LEFT | 0x02) && s_fake.mouse[2][0] == AGENT_MOUSE_LEFT);
+
+    reset();
+    assert(!run("button 4") && strcmp(s_reply, "err no such button") == 0);
+    assert(!run("button") && s_fake.mouse_count == 0);
+}
+
 static void test_scroll_clamps(void)
 {
     reset();
@@ -269,6 +287,7 @@ int main(void)
     test_move_is_paced();
     test_home_slams_top_left();
     test_drag_keeps_button_down();
+    test_other_buttons();
     test_scroll_clamps();
     test_type_and_key();
     test_pause_and_release();

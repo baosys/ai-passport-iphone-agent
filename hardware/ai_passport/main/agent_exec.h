@@ -1,7 +1,7 @@
 // main/agent_exec.h —— 板端命令执行器:一行协议命令 → 一串 HID 报告。纯逻辑,便于 host 测试。
 //
 // 协议与参考项目 esp32-iphone-agent 的 USB HID bridge 完全一致,服务器端无需修改:
-//   ping | home | move <dx> <dy> | press | release | click
+//   ping | home | move <dx> <dy> | press | release | click | button <1-3>
 //   scroll <v> <h> | type <ascii text> | key <combo, e.g. cmd+h, enter>
 // 每条命令回复 "ok" 或 "err <原因>"。板子不含任何决策逻辑,一切由服务器决定。
 //

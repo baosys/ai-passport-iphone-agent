@@ -200,6 +200,7 @@ API：`GET /api/mirror`（状态和学到的点击位置），`POST /api/mirror`
 | `HIDAGENT_MAX_STEPS` | `100` | 每个任务最多执行多少步，超过就放弃；`0` 表示不限，一直做到完成、失败或你手动停止 |
 | `HIDAGENT_PASTE` | Mac 登录 iCloud 时开启 | 设为 `1` / `0` 强制开启 / 关闭通过通用剪贴板粘贴中文 |
 | `HIDAGENT_RELAY_HOST` | 手机投屏连接到的地址 | 中文文本中转时 Safari 打开的地址 |
+| `HIDAGENT_SHORTCUT_BUTTON` | `3` | 运行粘贴快捷指令的鼠标键；设为 `0` 关闭 |
 
 ### 本地模型（可选）
 
@@ -242,6 +243,7 @@ LLM_EXTRA_BODY='{"chat_template_kwargs": {"enable_thinking": false}}'
 | `home` | 把指针推到左上角（一个已知位置） |
 | `move <dx> <dy>` | 相对移动指针，匀速移动，让 iOS 的指针加速度可预测 |
 | `press` / `release` / `click` | 左键按下 / 松开 / 点击 |
+| `button <n>` | 点按鼠标键 1–3（3 是中键；辅助触控可把它映射为快捷指令） |
 | `scroll <v> <h>` | 滚轮 |
 | `type <text>` | 输入 ASCII 文字 |
 | `key <combo>` | 按键，例如 `enter`、`cmd+h`、`cmd+space` |
@@ -261,7 +263,7 @@ server/     Agent、网页界面、屏幕采集和板子连接（Python，FastAP
 
 - [ ] 测试基于 DiffusionGemma 的纯本地方案（`server/serve/` 里有实验性的 OpenAI 兼容服务）
 - [ ] 支持横屏 App（目前坐标和校准都按竖屏计算）
-- [x] 准确的中文输入（通用剪贴板或 Safari 中转，拼音输入兜底）
+- [x] 准确的中文输入（通用剪贴板、粘贴快捷指令或 Safari 中转，拼音输入兜底）
 - [ ] 更多常用 App 的示例任务
 
 ## 限制
@@ -269,8 +271,15 @@ server/     Agent、网页界面、屏幕采集和板子连接（Python，FastAP
 - iOS 不镜像部分界面（输入密码、Apple Pay、有版权保护的视频），Agent 看不到这些画面。
 - 手机锁屏后镜像会断开，Agent 工作时请关闭自动锁定。
 - 板子发送的是按键码而不是字符，所以中文一律粘贴，任意长度都准确。Mac 和 iPhone 登录同一 Apple 账号（打开“接力”）时，
-  通用剪贴板大约一秒送达；否则服务器把文本放在一个一次性网页上：手机在 Safari 打开它，点一下复制，沿底边滑动回到原 App
+  通用剪贴板大约一秒送达；没有的话，粘贴快捷指令约两秒完成，不离开当前 App（设置见下）；再不行，服务器把文本放在一个一次性网页上：手机在 Safari 打开它，点一下复制，沿底边滑动回到原 App
   再粘贴（约 20 秒，会覆盖手机剪贴板）。拼音输入总是选第一个候选词，只作最后的兜底。
+
+  粘贴快捷指令，每台手机设置一次（需要带 `button` 命令的 AI Passport 固件）：在“快捷指令”里新建“AI Passport 粘贴”，
+  加入 **获取 URL 内容** `http://<Mac 名称>.local:8890/clip`（Mac 名称见 `scutil --get LocalHostName`）和 **拷贝至剪贴板**，
+  先手动运行一次并允许连接。然后打开 设置 → 辅助功能 → 触控 → 辅助触控 → 设备 → AI Passport → 自定附加按钮：iOS
+  等待按键时，从服务器发送 `button 3`（在 `HIDAGENT_DEBUG=1` 下执行 `curl -X POST localhost:8890/api/raw -H
+  'content-type: application/json' -d '{"text":"button 3"}'`），再把它指定为这个快捷指令。`HIDAGENT_SHORTCUT_BUTTON`
+  可换成别的键，设为 `0` 则关闭快捷指令。
 - 修改辅助触控的跟踪速度后需要重新校准。
 - 暂不支持横屏 App：在横屏界面里的点按和绘图位置会偏。
 - 在有多个网卡的 Linux 机器上，如果手机列表里看不到接收端，把 Avahi（mDNS）限制在手机所在网络的网卡上。

@@ -2,7 +2,7 @@
 // line commands over TCP (Wi-Fi). It holds no logic; the server decides.
 //
 // Protocol (one command per line, the board answers "ok" or "err <why>"):
-//   ping | home | move <dx> <dy> | press | release | click
+//   ping | home | move <dx> <dy> | press | release | click | button <1-3>
 //   scroll <v> <h> | type <ascii text> | key <combo, e.g. cmd+h, enter>
 
 #include <WiFi.h>
@@ -92,6 +92,12 @@ String run(const String &line) {
   if (cmd == "press") { mouse.press(MOUSE_LEFT); return "ok"; }
   if (cmd == "release") { mouse.release(MOUSE_LEFT); return "ok"; }
   if (cmd == "click") { mouse.press(MOUSE_LEFT); delay(60); mouse.release(MOUSE_LEFT); return "ok"; }
+  if (cmd == "button") {  // other buttons: AssistiveTouch can map them to a shortcut
+    if (a < 1 || a > 3) return "err no such button";
+    uint8_t b = 1 << (a - 1);  // HID button n: 1 left, 2 right, 3 middle
+    mouse.press(b); delay(60); mouse.release(b);
+    return "ok";
+  }
   if (cmd == "scroll") { mouse.move(0, 0, a, b); return "ok"; }
   if (cmd == "type") { keyboard.print(arg); return "ok"; }
   if (cmd == "key") return pressCombo(arg) ? "ok" : "err unknown key";

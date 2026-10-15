@@ -219,6 +219,7 @@ Set in `server/.env` (see [`.env.example`](server/.env.example)):
 | `HIDAGENT_MAX_STEPS` | `100` | Most actions per task before the agent gives up; `0` runs until the task is done, fails, or you stop it |
 | `HIDAGENT_PASTE` | on when the Mac is signed in to iCloud | `1` / `0` forces pasting Chinese through Universal Clipboard on / off |
 | `HIDAGENT_RELAY_HOST` | the address the phone mirrors to | Address Safari opens for the Chinese text relay |
+| `HIDAGENT_SHORTCUT_BUTTON` | `3` | Mouse button that runs the paste Shortcut; `0` turns it off |
 
 ### Local model (optional)
 
@@ -264,6 +265,7 @@ command per line over TCP and the board answers `ok` or `err <reason>`. With the
 | `home` | Push the pointer into the top-left corner (a known position) |
 | `move <dx> <dy>` | Relative pointer move, at a constant pace so iOS pointer acceleration stays predictable |
 | `press` / `release` / `click` | Left button down / up / both |
+| `button <n>` | Click mouse button 1–3 (3 is the middle button; AssistiveTouch can map it to a Shortcut) |
 | `scroll <v> <h>` | Scroll wheel |
 | `type <text>` | Type ASCII text |
 | `key <combo>` | Press keys, e.g. `enter`, `cmd+h`, `cmd+space` |
@@ -286,7 +288,7 @@ server/     agent, web UI, screen capture and board link (Python, FastAPI)
 
 - [ ] Test a fully local setup with DiffusionGemma (`server/serve/` has an experimental OpenAI-compatible server)
 - [ ] Landscape apps (screen coordinates and calibration assume portrait)
-- [x] Exact Chinese text input (Universal Clipboard or a Safari relay, pinyin as the last resort)
+- [x] Exact Chinese text input (Universal Clipboard, a paste Shortcut or a Safari relay, pinyin as the last resort)
 - [ ] More example tasks across popular apps
 
 ## Limitations
@@ -294,10 +296,19 @@ server/     agent, web UI, screen capture and board link (Python, FastAPI)
 - iOS does not mirror some screens (passcode entry, Apple Pay, DRM video); the agent cannot see them.
 - Mirroring stops when the phone locks; keep auto-lock off while the agent works.
 - The board types key codes, not characters, so Chinese is pasted, exactly and at any length. With the Mac signed
-  in to the phone's Apple ID (Handoff on), Universal Clipboard carries it in about a second. Otherwise the server
+  in to the phone's Apple ID (Handoff on), Universal Clipboard carries it in about a second. Without it, a paste
+  Shortcut does the same in about two seconds without leaving the app (set up below). Otherwise the server
   offers the text on a one-time page: the phone opens it in Safari, one tap copies it, a swipe along the bottom edge
   returns to the app and the text is pasted (about 20 seconds; it replaces the phone's clipboard). Pinyin typing,
   which picks the first candidate, is only the last resort.
+
+  Paste Shortcut, once per phone (needs the AI Passport firmware with the `button` command): in Shortcuts, make a
+  Shortcut "AI Passport Paste" with **Get Contents of URL** `http://<Mac name>.local:8890/clip` (the Mac name is
+  `scutil --get LocalHostName`) and **Copy to Clipboard**, run it once and allow the connection. Then Settings →
+  Accessibility → Touch → AssistiveTouch → Devices → AI Passport → Customize Additional Buttons: while iOS waits
+  for a button, send `button 3` from the server (`curl -X POST localhost:8890/api/raw -H 'content-type:
+  application/json' -d '{"text":"button 3"}'` with `HIDAGENT_DEBUG=1`) and assign the Shortcut.
+  `HIDAGENT_SHORTCUT_BUTTON` picks another button; `0` turns the Shortcut off.
 - Re-calibrate after changing AssistiveTouch tracking speed.
 - Landscape apps are not supported yet: drawings and taps there land in the wrong place.
 - On Linux machines with several network interfaces, limit Avahi (mDNS) to the interface on the phone's network

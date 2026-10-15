@@ -157,6 +157,16 @@ bool agent_exec_run(agent_exec_t *ex, const char *line, char *reply, size_t repl
         pace(ex, 0);
         REPLY("ok");
     }
+    if (strcmp(cmd, "button") == 0) {  // 点按别的鼠标键:辅助触控可把它们映射成快捷指令等动作
+        a = strtol(arg, NULL, 10);
+        if (a < 1 || a > 3) REPLY("err no such button");
+        const uint8_t bit = (uint8_t)(1u << (a - 1));
+        SEND(set_buttons(ex, ex->buttons | bit));
+        pace(ex, ex->cfg.click_ms);
+        SEND(set_buttons(ex, ex->buttons & (uint8_t)~bit));
+        pace(ex, 0);
+        REPLY("ok");
+    }
     if (strcmp(cmd, "scroll") == 0) {
         parse_two(arg, &a, &b);
         SEND(mouse(ex, 0, 0, clamp(a, 127), clamp(b, 127)));
