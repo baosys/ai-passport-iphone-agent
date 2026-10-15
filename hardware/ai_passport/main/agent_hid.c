@@ -143,6 +143,13 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             return 0;
         }
         s_conn = event->connect.conn_handle;
+        // 已绑定的 iPhone 回连时,加密完成(ENC_CHANGE)可能比本事件先送到:链路已加密就保持就绪,
+        // 不能退回「已连接」,也不能再发起一次安全流程(它会 30 s 超时,板子就一直以为手机没连上)。
+        if (ble_gap_conn_find(s_conn, &desc) == 0 && desc.sec_state.encrypted) {
+            s_state = AGENT_HID_READY;
+            ESP_LOGI(TAG, "phone connected, link already encrypted");
+            return 0;
+        }
         s_state = AGENT_HID_CONNECTED;
         ESP_LOGI(TAG, "phone connected");
         // 已绑定的手机回连时直接用保存的密钥加密;新手机由这里触发配对。
