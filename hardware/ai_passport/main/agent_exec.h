@@ -2,7 +2,7 @@
 //
 // 协议与参考项目 esp32-iphone-agent 的 USB HID bridge 完全一致,服务器端无需修改:
 //   ping | home | move <dx> <dy> | press | release | click | button <1-3>
-//   scroll <v> <h> | type <ascii text> | key <combo, e.g. cmd+h, enter>
+//   scroll <v> <h> | wheel <v> <ms> | type <ascii text> | key <combo, e.g. cmd+h, enter>
 // 每条命令回复 "ok" 或 "err <原因>"。板子不含任何决策逻辑,一切由服务器决定。
 //
 // 与 USB 版的区别只在传输层:报告经 BLE HID(HID over GATT)送达 iPhone。BLE 报告随

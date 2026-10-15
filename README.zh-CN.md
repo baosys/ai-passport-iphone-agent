@@ -245,6 +245,7 @@ LLM_EXTRA_BODY='{"chat_template_kwargs": {"enable_thinking": false}}'
 | `press` / `release` / `click` | 左键按下 / 松开 / 点击 |
 | `button <n>` | 点按鼠标键 1–3（3 是中键；辅助触控可把它映射为快捷指令） |
 | `scroll <v> <h>` | 滚轮 |
+| `wheel <v> <ms>` | 平滑滚动：在约 ms 毫秒内滚 v 格，先加速后减速（旧固件退回 `scroll`） |
 | `type <text>` | 输入 ASCII 文字 |
 | `key <combo>` | 按键，例如 `enter`、`cmd+h`、`cmd+space` |
 

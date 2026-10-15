@@ -68,16 +68,31 @@ def test_back_swipe_starts_pinned_on_the_left_edge(tmp_path):
     assert device.sent[-1] == "release"
 
 
-def test_the_wheel_scrolls_in_small_reports_without_pressing(tmp_path, monkeypatch):
+def test_the_board_scrolls_smoothly_in_one_command_without_pressing(tmp_path):
     phone, device = make_phone(tmp_path)
-    monkeypatch.setattr(phone_module, "WHEEL_GAP", 0)
-    asyncio.run(phone.wheel(0.5, 0.5, 0.06))  # 15 units
+    asyncio.run(phone.wheel(0.5, 0.5, 0.2))
     assert "press" not in device.sent
-    assert [line for line in device.sent if line.startswith("scroll")] == [
-        "scroll 1 0", "scroll 2 0", "scroll 3 0", "scroll 3 0", "scroll 3 0", "scroll 2 0", "scroll 1 0"]
-    device.sent.clear()
-    asyncio.run(phone.wheel(0.5, 0.5, -0.012))
-    assert [line for line in device.sent if line.startswith("scroll")] == ["scroll -1 0", "scroll -1 0", "scroll -1 0"]
+    assert device.sent[-1] == "wheel 50 428"
+    asyncio.run(phone.wheel(0.5, 0.5, -3))  # never more than WHEEL_MOST at once
+    assert device.sent[-1] == "wheel -112 650"
+
+
+def test_older_firmware_scrolls_report_by_report(tmp_path):
+    phone, device = make_phone(tmp_path)
+
+    async def send(line):
+        if line.startswith("wheel"):
+            raise phone_module.DeviceError("err unknown command")
+        device.sent.append(line)
+        return "ok"
+
+    device.send = send
+    asyncio.run(phone.wheel(0.5, 0.5, -0.06))  # 15 units
+    asyncio.run(phone.wheel(0.5, 0.5, -0.06))  # not asked again
+    scrolls = [line for line in device.sent if line.startswith("scroll")]
+    assert scrolls[:7] == ["scroll -1 0", "scroll -2 0", "scroll -3 0", "scroll -3 0", "scroll -3 0", "scroll -2 0",
+                           "scroll -1 0"]
+    assert sum(int(line.split()[1]) for line in scrolls) == -30
 
 
 @pytest.mark.parametrize("units", range(1, 120))

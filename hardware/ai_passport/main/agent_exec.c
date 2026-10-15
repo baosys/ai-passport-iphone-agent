@@ -81,6 +81,24 @@ static bool move_paced(agent_exec_t *ex, long dx, long dy)
     return true;
 }
 
+// 滚轮 v 格,在约 ms 毫秒内送完:位置沿 3t²-2t³ 先加速后减速,像手指一样,而不是一下跳过去。
+// 逐步取差,累计正好是 v。
+static bool wheel_eased(agent_exec_t *ex, long v, long ms)
+{
+    long n = ms / (long)(ex->cfg.interval_ms ? ex->cfg.interval_ms : 1);
+    while (n < 1 || 3 * labs(v) > 2 * 127 * n) n++;  // 曲线中段每报告约 1.5 v/n 格,不超过 127
+    const int64_t n3 = (int64_t)n * n * n;
+    long done = 0;
+    for (long i = 1; i <= n; i++) {
+        const int64_t num = (int64_t)v * (3 * (int64_t)i * i * n - 2 * (int64_t)i * i * i);
+        const long at = (long)((2 * num + (num < 0 ? -n3 : n3)) / (2 * n3));
+        if (at != done && !mouse(ex, 0, 0, (int)(at - done), 0)) return false;
+        done = at;
+        pace(ex, 0);
+    }
+    return true;
+}
+
 static bool set_buttons(agent_exec_t *ex, uint8_t buttons)
 {
     ex->buttons = buttons;
@@ -165,6 +183,12 @@ bool agent_exec_run(agent_exec_t *ex, const char *line, char *reply, size_t repl
         pace(ex, ex->cfg.click_ms);
         SEND(set_buttons(ex, ex->buttons & (uint8_t)~bit));
         pace(ex, 0);
+        REPLY("ok");
+    }
+    if (strcmp(cmd, "wheel") == 0) {  // 平滑滚动 <格数> <毫秒>
+        parse_two(arg, &a, &b);
+        if (labs(a) > 1000 || b < 0 || b > 3000) REPLY("err wheel too large");
+        SEND(wheel_eased(ex, a, b));
         REPLY("ok");
     }
     if (strcmp(cmd, "scroll") == 0) {

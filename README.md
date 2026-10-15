@@ -267,6 +267,7 @@ command per line over TCP and the board answers `ok` or `err <reason>`. With the
 | `press` / `release` / `click` | Left button down / up / both |
 | `button <n>` | Click mouse button 1–3 (3 is the middle button; AssistiveTouch can map it to a Shortcut) |
 | `scroll <v> <h>` | Scroll wheel |
+| `wheel <v> <ms>` | Smooth scroll: v wheel units over about ms, eased in and out (falls back to `scroll`) |
 | `type <text>` | Type ASCII text |
 | `key <combo>` | Press keys, e.g. `enter`, `cmd+h`, `cmd+space` |
 

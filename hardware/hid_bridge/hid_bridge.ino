@@ -3,7 +3,7 @@
 //
 // Protocol (one command per line, the board answers "ok" or "err <why>"):
 //   ping | home | move <dx> <dy> | press | release | click | button <1-3>
-//   scroll <v> <h> | type <ascii text> | key <combo, e.g. cmd+h, enter>
+//   scroll <v> <h> | wheel <v> <ms> | type <ascii text> | key <combo, e.g. cmd+h, enter>
 
 #include <WiFi.h>
 #include <esp_task_wdt.h>
@@ -32,6 +32,21 @@ void movePaced(long dx, long dy) {
     mouse.move(sx, sy);
     dx -= sx;
     dy -= sy;
+    delay(STEP_MS);
+  }
+}
+
+// Scroll v wheel units over about ms: eased in and out (3t^2 - 2t^3) like a finger, not one jump.
+void wheelEased(long v, long ms) {
+  long n = max(1L, ms / STEP_MS);
+  while (3 * labs(v) > 2 * 127 * n) n++;  // mid-curve reports carry about 1.5 v / n units
+  const int64_t n3 = (int64_t)n * n * n;
+  long done = 0;
+  for (long i = 1; i <= n; i++) {
+    int64_t num = (int64_t)v * (3 * (int64_t)i * i * n - 2 * (int64_t)i * i * i);
+    long at = (long)((2 * num + (num < 0 ? -n3 : n3)) / (2 * n3));
+    if (at != done) mouse.move(0, 0, at - done);
+    done = at;
     delay(STEP_MS);
   }
 }
@@ -96,6 +111,11 @@ String run(const String &line) {
     if (a < 1 || a > 3) return "err no such button";
     uint8_t b = 1 << (a - 1);  // HID button n: 1 left, 2 right, 3 middle
     mouse.press(b); delay(60); mouse.release(b);
+    return "ok";
+  }
+  if (cmd == "wheel") {  // smooth scroll: <units> <ms>
+    if (labs(a) > 1000 || b < 0 || b > 3000) return "err wheel too large";
+    wheelEased(a, b);
     return "ok";
   }
   if (cmd == "scroll") { mouse.move(0, 0, a, b); return "ok"; }

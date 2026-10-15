@@ -225,6 +225,34 @@ static void test_scroll_clamps(void)
     assert((int8_t)s_fake.mouse[0][3] == -3 && (int8_t)s_fake.mouse[0][4] == 127);
 }
 
+static void test_wheel_eases_in_and_out(void)
+{
+    reset();
+    assert(run("wheel -60 300"));
+    int sum = 0, peak = 0, first = 0, last = 0;
+    for (int i = 0; i < s_fake.mouse_count; i++) {
+        const int w = (int8_t)s_fake.mouse[i][3];
+        assert(w < 0 && s_fake.mouse[i][1] == 0 && s_fake.mouse[i][2] == 0);
+        sum += w;
+        if (-w > peak) peak = -w;
+        if (i == 0) first = -w;
+        last = -w;
+    }
+    assert(sum == -60);
+    assert(first < peak && last < peak);  // slow at both ends, fastest in the middle
+    assert(s_fake.slept_ms >= 300);
+
+    reset();
+    assert(run("wheel 1000 0"));  // no time given: as fast as the reports allow, none over 127
+    sum = 0;
+    for (int i = 0; i < s_fake.mouse_count; i++) sum += (int8_t)s_fake.mouse[i][3];
+    assert(sum == 1000);
+
+    reset();
+    assert(!run("wheel 2000 100") && strcmp(s_reply, "err wheel too large") == 0);
+    assert(s_fake.mouse_count == 0);
+}
+
 static void test_type_and_key(void)
 {
     reset();
@@ -289,6 +317,7 @@ int main(void)
     test_drag_keeps_button_down();
     test_other_buttons();
     test_scroll_clamps();
+    test_wheel_eases_in_and_out();
     test_type_and_key();
     test_pause_and_release();
     test_pause_stops_a_gesture_in_flight();

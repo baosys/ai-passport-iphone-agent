@@ -50,9 +50,9 @@ SHORTCUT_FETCH = 4.0    # seconds for the Shortcut to start and fetch /clip
 SHORTCUT_COPY = 0.6     # seconds from the fetch until the Shortcut has copied the text
 SHORTCUT_RETRY = 600    # seconds without trying the Shortcut after it did not fetch
 WHEEL_SCREEN = 0.004    # screen heights the content moves per wheel unit (measured: 30 units, 12%)
-WHEEL_STEP = 3          # wheel units per report at full speed; a finger's pace, not a flick
-WHEEL_GAP = 0.025       # seconds between wheel reports
 WHEEL_MOST = 0.45       # screen heights one scroll moves at most
+WHEEL_MS = (250, 650)   # milliseconds a scroll takes: a short one, and one of WHEEL_MOST
+WHEEL_STEP = 6          # older firmware (no wheel command): wheel units per scroll report at full speed
 
 
 def wheel_steps(units: int) -> list[int]:
@@ -79,6 +79,7 @@ class Phone:
         self._moves = 0
         self._link = 0  # device.links when the pointer was last homed
         self._no_paste = 0.0  # when a paste last changed nothing
+        self._no_wheel = False  # older firmware without the wheel command
         self._no_shortcut = 0.0  # when the paste Shortcut last did not run (inf: the board has no such button)
         # where the pointer really landed (seen on screen) for the screen fraction we aimed at, per axis;
         # a straight-line fit through them corrects every later move, so taps get better as the agent works
@@ -264,16 +265,26 @@ class Phone:
     async def wheel(self, x: float, y: float, dy: float) -> None:
         """Scroll the content under (x, y) by about dy of the screen height (> 0: further down) with the wheel,
         which presses nothing, unlike a swipe that may open a long-press menu. iOS moves the content about
-        WHEEL_SCREEN screens per wheel unit. Small, evenly paced reports that speed up and slow down again move
-        it like a finger would, not in jumps."""
-        units = round(min(abs(dy), WHEEL_MOST) / WHEEL_SCREEN)
+        WHEEL_SCREEN screens per wheel unit. The board speeds up and slows down again like a finger, in well
+        under a second; older firmware gets the same curve in coarser steps, one command per report."""
+        dy = max(-WHEEL_MOST, min(WHEEL_MOST, dy))
+        units = round(dy / WHEEL_SCREEN)
         if not units:
             return
         await self.point(x, y)
-        sign = 1 if dy > 0 else -1
-        for step in wheel_steps(units):
+        if not self._no_wheel:
+            ms = round(WHEEL_MS[0] + (WHEEL_MS[1] - WHEEL_MS[0]) * abs(dy) / WHEEL_MOST)
+            try:
+                await self.device.send(f"wheel {units} {ms}")
+                return
+            except DeviceError as e:
+                if not str(e).startswith("err unknown command"):
+                    raise
+                log.info("the board has no 'wheel' command (older firmware): scrolling report by report")
+                self._no_wheel = True
+        sign = 1 if units > 0 else -1
+        for step in wheel_steps(abs(units)):
             await self.device.send(f"scroll {sign * step} 0")
-            await asyncio.sleep(WHEEL_GAP)
 
     async def type(self, text: str) -> None:
         """ASCII goes straight to the keyboard. Anything else (Chinese) is pasted exactly: from this computer's

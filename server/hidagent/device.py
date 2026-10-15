@@ -60,6 +60,8 @@ class Device:
             return 5 + max(abs(int(n)) for n in arg.split()) / 10 * 0.012
         if name == "type":
             return 5 + 0.1 * len(arg)
+        if name == "wheel":
+            return 5 + int(arg.split()[-1]) / 1000
         if name == "ping":
             return 8  # an idle check: tolerate a Wi-Fi hiccup rather than drop a healthy board
         return 5
