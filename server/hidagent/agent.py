@@ -59,6 +59,8 @@ use them instead of taps:
   Accessibility -> Keyboards). Then key tab / shift+tab moves the ring to the next / previous item, arrow keys
   move it within a group, and key space activates the ringed item. Use it when the target is a move or two
   from the ring. With no ring, or when key tab changed nothing, it is off: tap instead.
+The plan is the whole task, not what is left: a plan step that the earlier or recent steps already finished (their
+pages show it, e.g. a receipt page after accepting a transfer) is done; never start it again, go on with the next.
 The agent only remembers recent actions, not earlier screens. When the goal needs something you read here later
 (e.g. read the weather, then message it to someone), keep it with note TEXT before you leave the screen: notes stay
 with you for the whole task. Write the facts themselves (dates, numbers, names, steps), in the language the message
@@ -127,6 +129,7 @@ ACTIONS = {"tap": ("x", "y"), "swipe": ("x1", "y1", "x2", "y2"), "scroll": ("x",
            "home": (), "back": (), "wait": (), "replan": ()}
 TEXT_ARGS = ("text", "combo", "app", "answer", "reason")
 NO_PHONE = ("note", "done", "fail")  # actions that do nothing on the phone
+CYCLE_ACTIONS = ("tap", "back", "home", "open")  # moves that navigate; going round them is a loop
 # who decided a step, cheapest first: plain code (shortcuts), a remembered routine, Jev, the actor, the planner
 TIERS = ("code", "routine", "jev", "actor", "planner")
 
@@ -512,6 +515,11 @@ class Agent:
             return True
         seen = acts[0]["_shot"]
         spots = [self._pointer]  # where the pointer was and goes: pointer moves are not screen changes
+        if self._cycling(acts[0], seen):
+            self._record(acts[0]["_shot"], action="loop", tier="actor", **_page(acts[0]),
+                         reason=f"{acts[0]['action']} again on a screen where it was done twice before")
+            await self._replan(stuck=True)
+            return False
         stuck = self._repeating(acts[0])
         settle = 0.0  # seconds spent waiting for the screen, on top of the model's think_s and each act_s
         for i, act in enumerate(acts):
@@ -605,12 +613,27 @@ class Agent:
         return (len(moves) == limit - 1 and all(_key(m) == _key(act) for m in moves)
                 and moves[-1].get("changed") is not True)
 
+    def _cycling(self, act: dict, seen: bytes | None, times: int = 2, window: int = 12) -> bool:
+        """True when the actor picks a move it already made `times` times on this same screen, with other moves in
+        between: going round in a circle (into a chat, back to the list, into the same chat again) because it lost
+        track of what it already did. Every move there changes the screen, so _repeating misses it."""
+        moves = [i for i, s in enumerate(self.steps) if "plan" not in s and s["action"] != "note"][-window:]
+        if act["action"] not in CYCLE_ACTIONS or not seen or not moves or _alike(self.steps[moves[-1]], act):
+            return False  # the same move right again is a run (+ + +), which _repeating watches
+        here = {i: vision.same_screen(self.shots[i], seen) for i in moves if i in self.shots}
+        hits = [i for i in moves[:-1] if here.get(i) and _alike(self.steps[i], act)]
+        # it left this screen and came back: tapping keypad digits on one screen is no circle
+        return len(hits) >= times and any(here.get(i) is False for i in moves if i > hits[0])
+
     async def _replan(self, stuck: bool = False) -> None:
         prompt = f"Goal: {self.task}"
         if done := self._quick + self._replayed:
             prompt += "\nAlready done: " + ", ".join(" ".join(map(str, a.values())) for a in done)
         if stuck:
             last = self.steps[-1] if self.steps else {}
+            if trail := _trail(self.steps):
+                prompt += ("\n\nSteps taken so far (the page, then what was done there); leave what they already did "
+                           f"out of the new plan:\n{trail}")
             prompt += (f"\n\nThe previous plan got stuck (last event: {last.get('action')} {last.get('reason', '')}):"
                        f"\n{self.plan}\nLook at the current screen and plan from here, another way if needed.")
         reply, seconds, frame = await self._ask("planner", self.planner, PLANNER_PROMPT, prompt)
@@ -624,11 +647,16 @@ class Agent:
                   "changed", "tier")
         effect = {True: " -> screen changed", False: " -> screen did NOT change"}
         w, h = frame_size(self.screen.frame) or (1000, 1000)
-        history = "\n".join(_line(s, hidden, w, h) + effect.get(s.get("changed"), "")
-                            for s in self.steps[-8:] if "plan" not in s and s["action"] != "note") or "(none)"
+        moves = [s for s in self.steps if "plan" not in s and s["action"] != "note"]
+        # the page each move ran on: without it the actor saw bare taps and could not tell a finished step from
+        # one still to do (it accepted a transfer, went back to the chat list, and opened the same chat again)
+        history = "\n".join(_where(s) + _line(s, hidden, w, h) + effect.get(s.get("changed"), "")
+                            for s in moves[-8:]) or "(none)"
+        earlier = _trail(moves[:-8])
         notes = "\n".join(f"- {s['text']}" for s in self.steps if s["action"] == "note")[-6000:]
         prompt = (f"Goal: {self.task}\n\nPlan:\n{self.plan}\n\n"
                   + (f"Your notes so far (facts you read on earlier screens):\n{notes}\n\n" if notes else "")
+                  + (f"Earlier steps (the page, then what you did there):\n{earlier}\n\n" if earlier else "")
                   + f"Recent actions:\n{history}\n\nThe screenshot is {w} pixels wide and {h} pixels tall. "
                   "Next action?")
         for attempt in range(3):  # retry unparseable replies, a little less deterministically
@@ -674,6 +702,37 @@ def _line(step: dict, hidden: tuple, w: int, h: int) -> str:
         return (json.dumps(shown, ensure_ascii=False) + f" -> all {len(step['text'])} characters are in the field "
                 "exactly; a long text shows only in part there, so never type any of it again")
     return json.dumps(shown, ensure_ascii=False)[:300]
+
+
+def _where(step: dict) -> str:
+    """"on PAGE: " for a step that knows the page it ran on."""
+    return f"on {step['page']}: " if step.get("page") else ""
+
+
+def _trail(steps: list[dict], most: int = 40) -> str:
+    """The task so far in short: one line per move, its page and its action, repeats folded into one line.
+    Typed text is left out (it may be a password); the recent actions show it."""
+    lines: list[list] = []
+    for s in steps:
+        if "plan" in s or s["action"] == "note":
+            continue
+        what = f"open {s['app']}" if s["action"] == "open" else f"key {s['combo']}" if s["action"] == "key" \
+            else s["action"]
+        line = f"- {_where(s)}{what}"
+        if lines and lines[-1][0] == line:
+            lines[-1][1] += 1
+        else:
+            lines.append([line, 1])
+    return "\n".join(line + (f" (x{n})" if n > 1 else "") for line, n in lines[-most:])
+
+
+def _alike(step: dict, act: dict, near: int = 50) -> bool:
+    """The same move: same action, aimed within `near` (0-1000 screen units) on each axis."""
+    if step["action"] != act["action"]:
+        return False
+    if act["action"] == "open":
+        return step.get("app") == act.get("app")
+    return all(abs(step.get(k, 0) - act.get(k, 0)) <= near for k in ("x", "y", "x1", "y1", "x2", "y2"))
 
 
 def _page(step: dict) -> dict:

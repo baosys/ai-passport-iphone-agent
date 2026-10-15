@@ -343,3 +343,97 @@ def test_typed_chinese_is_shown_whole_and_marked_as_typed():
     asyncio.run(agent._next_actions())
     assert text in actor.prompts[0]
     assert f"all {len(text)} characters are in the field exactly" in actor.prompts[0]
+
+
+def _screen(shade):  # a real JPEG frame of one flat shade
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("L", (100, 200), shade).save(out, "JPEG")
+    return out.getvalue()
+
+
+def _agent_with(moves):
+    from hidagent.agent import Agent
+    from hidagent.debug import Trace
+
+    agent = Agent(phone=None, screen=None, actor=None, planner=None, trace=Trace(None))
+    for i, (frame, step) in enumerate(moves):
+        agent.steps.append(step)
+        agent.shots[i] = frame
+    return agent
+
+
+def test_going_round_in_circles_is_a_loop():
+    chats, chat = _screen(250), _screen(20)
+    open_chat, back = {"action": "tap", "x": 316, "y": 198}, {"action": "tap", "x": 54, "y": 74}
+    moves = [(chats, open_chat), (chat, back), (chats, {**open_chat, "x": 290}), (chat, back)]
+    agent = _agent_with(moves)
+    assert agent._cycling({**open_chat, "x": 340}, chats)  # the third time into the same chat from the list
+    assert not agent._cycling({"action": "tap", "x": 500, "y": 600}, chats)  # another chat
+    assert not _agent_with(moves[:2])._cycling(open_chat, chats)  # the second time is not a circle yet
+
+
+def test_tapping_keypad_digits_on_one_screen_is_no_loop():
+    pad = _screen(128)
+    one, two = {"action": "tap", "x": 200, "y": 700}, {"action": "tap", "x": 500, "y": 700}
+    agent = _agent_with([(pad, one), (pad, two), (pad, one), (pad, two)])
+    assert not agent._cycling(one, pad)
+    run = _agent_with([(pad, one), (_screen(20), two), (pad, one), (pad, one)])
+    assert not run._cycling(one, pad)  # the same tap right again (+ + +) is _repeating's to judge
+
+
+def test_actor_sees_where_each_step_ran_and_the_earlier_steps():
+    import asyncio
+
+    from hidagent.agent import Agent
+    from hidagent.debug import Trace
+
+    class Screen:
+        live, frame = True, _jpeg(1000, 1000)
+
+    class Actor:
+        model = "fake"
+        prompt = ""
+        async def chat(self, system, text, image=None, max_tokens=600, temperature=0):
+            self.prompt = text
+            return "THINK: next\nDO: tap 1 2"
+
+    actor = Actor()
+    agent = Agent(phone=None, screen=Screen(), actor=actor, planner=actor, trace=Trace(None))
+    agent.steps = ([{"action": "tap", "x": 500, "y": 580, "page": "WeChat transfer receipt", "changed": True},
+                    {"action": "type", "text": "secret", "page": "Password", "changed": True}]
+                   + [{"action": "back", "page": "WeChat chat", "changed": True}] * 2
+                   + [{"action": "tap", "x": 300, "y": 200, "page": "WeChat chat list", "changed": True}] * 8)
+    asyncio.run(agent._next_actions())
+    earlier = actor.prompt.split("Earlier steps")[1].split("Recent actions")[0]
+    assert "- on WeChat transfer receipt: tap" in earlier and "- on WeChat chat: back (x2)" in earlier
+    assert "secret" not in earlier  # typed text stays out of the summary
+    assert 'on WeChat chat list: {"action": "tap"' in actor.prompt
+
+
+def test_a_stuck_replan_sees_the_steps_taken():
+    import asyncio
+
+    from hidagent.agent import Agent
+    from hidagent.debug import Trace
+
+    class Screen:
+        live, frame = True, _jpeg(1000, 1000)
+
+    class Planner:
+        model = "fake"
+        prompt = ""
+        async def chat(self, system, text, image=None, max_tokens=600, temperature=0):
+            self.prompt = text
+            return "1. Open the NICE chat"
+
+    planner = Planner()
+    agent = Agent(phone=None, screen=Screen(), actor=planner, planner=planner, trace=Trace(None))
+    agent.task = "accept the transfer, then pay"
+    agent.steps = [{"action": "tap", "x": 500, "y": 580, "page": "WeChat transfer receipt"},
+                   {"action": "loop", "reason": "tap again"}]
+    asyncio.run(agent._replan(stuck=True))
+    assert "- on WeChat transfer receipt: tap" in planner.prompt and "leave what they already did" in planner.prompt
