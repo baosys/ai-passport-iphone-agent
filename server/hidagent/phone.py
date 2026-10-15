@@ -50,7 +50,22 @@ SHORTCUT_FETCH = 4.0    # seconds for the Shortcut to start and fetch /clip
 SHORTCUT_COPY = 0.6     # seconds from the fetch until the Shortcut has copied the text
 SHORTCUT_RETRY = 600    # seconds without trying the Shortcut after it did not fetch
 WHEEL_SCREEN = 0.004    # screen heights the content moves per wheel unit (measured: 30 units, 12%)
-WHEEL_STEP = 10         # wheel units per report
+WHEEL_STEP = 3          # wheel units per report at full speed; a finger's pace, not a flick
+WHEEL_GAP = 0.025       # seconds between wheel reports
+WHEEL_MOST = 0.45       # screen heights one scroll moves at most
+
+
+def wheel_steps(units: int) -> list[int]:
+    """Wheel units per report adding up to `units`: 1, 2, ... up to WHEEL_STEP, then down again at the end."""
+    ramp, left = [], units
+    for step in range(1, WHEEL_STEP):
+        if left < 2 * step:  # as much again is needed to slow down
+            break
+        ramp.append(step)
+        left -= 2 * step
+    top = len(ramp) + 1
+    full, rest = divmod(left, top)
+    return sorted(ramp + ([rest] if rest else [])) + [top] * full + ramp[::-1]
 
 
 class Phone:
@@ -249,16 +264,16 @@ class Phone:
     async def wheel(self, x: float, y: float, dy: float) -> None:
         """Scroll the content under (x, y) by about dy of the screen height (> 0: further down) with the wheel,
         which presses nothing, unlike a swipe that may open a long-press menu. iOS moves the content about
-        WHEEL_SCREEN screens per wheel unit; small reports keep it from accelerating."""
-        units = round(abs(dy) / WHEEL_SCREEN)
+        WHEEL_SCREEN screens per wheel unit. Small, evenly paced reports that speed up and slow down again move
+        it like a finger would, not in jumps."""
+        units = round(min(abs(dy), WHEEL_MOST) / WHEEL_SCREEN)
         if not units:
             return
         await self.point(x, y)
         sign = 1 if dy > 0 else -1
-        while units > 0:
-            step = min(units, WHEEL_STEP)
+        for step in wheel_steps(units):
             await self.device.send(f"scroll {sign * step} 0")
-            units -= step
+            await asyncio.sleep(WHEEL_GAP)
 
     async def type(self, text: str) -> None:
         """ASCII goes straight to the keyboard. Anything else (Chinese) is pasted exactly: from this computer's

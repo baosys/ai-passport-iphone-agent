@@ -1,9 +1,11 @@
 import asyncio
 import json
 
+import pytest
+
 import hidagent.phone as phone_module
 from hidagent import textinput, vision
-from hidagent.phone import EDGE_PUSH, Phone
+from hidagent.phone import EDGE_PUSH, Phone, wheel_steps
 
 
 class FakeDevice:
@@ -66,14 +68,23 @@ def test_back_swipe_starts_pinned_on_the_left_edge(tmp_path):
     assert device.sent[-1] == "release"
 
 
-def test_the_wheel_scrolls_in_small_reports_without_pressing(tmp_path):
+def test_the_wheel_scrolls_in_small_reports_without_pressing(tmp_path, monkeypatch):
     phone, device = make_phone(tmp_path)
-    asyncio.run(phone.wheel(0.5, 0.5, 0.1))  # a tenth of the screen: 25 units
+    monkeypatch.setattr(phone_module, "WHEEL_GAP", 0)
+    asyncio.run(phone.wheel(0.5, 0.5, 0.06))  # 15 units
     assert "press" not in device.sent
-    assert [line for line in device.sent if line.startswith("scroll")] == ["scroll 10 0", "scroll 10 0", "scroll 5 0"]
+    assert [line for line in device.sent if line.startswith("scroll")] == [
+        "scroll 1 0", "scroll 2 0", "scroll 3 0", "scroll 3 0", "scroll 3 0", "scroll 2 0", "scroll 1 0"]
     device.sent.clear()
-    asyncio.run(phone.wheel(0.5, 0.5, -0.04))
-    assert [line for line in device.sent if line.startswith("scroll")] == ["scroll -10 0"]
+    asyncio.run(phone.wheel(0.5, 0.5, -0.012))
+    assert [line for line in device.sent if line.startswith("scroll")] == ["scroll -1 0", "scroll -1 0", "scroll -1 0"]
+
+
+@pytest.mark.parametrize("units", range(1, 120))
+def test_wheel_steps_add_up_and_stay_gentle(units):
+    steps = wheel_steps(units)
+    assert sum(steps) == units and max(steps) <= phone_module.WHEEL_STEP
+    assert all(abs(a - b) <= 1 for a, b in zip(steps, steps[1:], strict=False))
 
 
 def test_release_follows_press_even_when_the_swipe_fails(tmp_path):
