@@ -221,6 +221,7 @@ Set in `server/.env` (see [`.env.example`](server/.env.example)):
 | `HIDAGENT_RELAY_HOST` | the address the phone mirrors to | Address Safari opens for the Chinese text relay |
 | `HIDAGENT_SHORTCUT_BUTTON` | `3` | Mouse button that runs the paste Shortcut; `0` turns it off |
 | `HIDAGENT_SECRET_<NAME>` | — | A password the agent may enter as `{NAME}`, see [Passwords](#passwords) |
+| `HIDAGENT_SECRET_<NAME>_MAX` | — | The largest amount a task using `{NAME}` may state |
 | `HIDAGENT_KEYCHAIN_SECRETS` | — | Comma-separated Keychain names to load at start, so they are hidden even when typed into a task |
 
 ### Passwords
@@ -229,17 +230,26 @@ Never type a password into a task: the models, the traces and the routines would
 instead and name it in the task as `{NAME}`:
 
 ```bash
-HIDAGENT_SECRET_WECHAT_PAY=123456          # in server/.env, or in the macOS Keychain:
-security add-generic-password -s hidagent -a WECHAT_PAY -w
+security add-generic-password -s hidagent -a WECHAT_PAY -w   # preferred: the macOS Keychain, read per task
+HIDAGENT_SECRET_WECHAT_PAY=123456          # or in server/.env (used when the Keychain has no such item)
+HIDAGENT_SECRET_WECHAT_PAY_MAX=200         # optional cap on the amount a task using it may state
 ```
 
 A task such as *"Send Alice ¥1 on WeChat and pay with {WECHAT_PAY}"* keeps the placeholder all the way through. The
 actor answers `secret WECHAT_PAY` to type it into the focused field, or `keypad WECHAT_PAY X1 Y1 X2 Y2` for a digit
-keypad an app draws itself (WeChat Pay's): it gives only where the keypad is and the server taps each digit. Each
-secret is entered at most once per task, only if the task names it, and no command or tap of it is logged. A task
-that needs a password with nothing stored stops and hands over (*"Your turn"*) so you enter it on the phone. Any
-stored value that turns up in text is replaced by its placeholder before it reaches a model, a trace or a log, and
-tasks with secrets are never remembered as routines.
+keypad an app draws itself (WeChat Pay's): it gives only roughly where the keypad is. The server then finds the 3×4
+keys on the screen itself (digits, the blank key, delete), clears the field, presses each digit and waits for its
+dot. If a dot does not appear, or too many do, it clears the field and tries once more; a second miss, or the app
+leaving the sheet half-way, ends the task with *"Gave up"* instead of trying again, since wrong payment passwords
+lock the account. Nobody has to be at the phone: the actor picks *Use Password* over Face ID.
+
+Each secret is entered at most once per task, only if the task names it, and no command or tap of it is logged;
+every use writes one `secret` line with its name and outcome (never the value) to the trace. With `_MAX` set, a task
+must state its amount (`¥20`, `20元`, `20 yuan`) and is refused before it starts when any amount is above the cap.
+The cap is checked against the task text, not read off the payment screen. A task that needs a password with nothing
+stored stops and hands over (*"Your turn"*) so you enter it on the phone. Any stored value that turns up in text is
+replaced by its placeholder before it reaches a model, a trace or a log, and tasks with secrets are never remembered
+as routines.
 
 ### Local model (optional)
 

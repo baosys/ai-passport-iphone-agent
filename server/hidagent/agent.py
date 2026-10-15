@@ -93,9 +93,11 @@ visible item. If you reached both ends of the list and the item is not there, st
 closest options you saw; do not keep scrolling.
 Passwords: {NAME} in the goal (e.g. {WECHAT_PAY}) stands for a secret stored on the computer. You never see its
 value: never type the braces or guess it. Enter it with secret NAME into a focused text field, or with keypad NAME
-on a digit keypad that the app draws itself (e.g. WeChat Pay's), which ignores the keyboard. Enter each secret once;
-it shows only as dots. When a password, PIN or code is asked for and the goal names no {NAME} for it, or that
-secret is not stored, stop with ask and tell the user what to enter on the phone; never guess one.
+on a digit keypad that the app draws itself (e.g. WeChat Pay's), which ignores the keyboard: you give its corners,
+the computer finds the keys, presses them and checks every dot itself. Enter each secret once; it shows only as
+dots. Nobody is at the phone: when the app offers Face ID or Touch ID for a payment the goal gives a {NAME} for,
+choose the password instead (使用密码 / Use Password) and enter it. When a password, PIN or code is asked for and
+the goal names no {NAME} for it, stop with ask and tell the user what to enter on the phone; never guess one.
 Only tap things you can actually see on this screenshot; never guess where a button might be.
 If you are unsure what an element does, tap it alone (one DO line) and check the result next round.
 Actions:
@@ -129,6 +131,8 @@ DO: open App Store"""
 
 # not part of the action
 BLIND_WAIT = 60  # seconds a task waits for a lost mirror to come back before it gives up
+DOT_WAIT = 1.5  # seconds a keypad press has to show its dot
+SHEET_CHANGE = 4.0  # same_screen limit on a keypad sheet: its dots change it by 0-0.2, another screen by ~40
 
 META = ("t", "thought", "thought_zh", "page", "think_s", "act_s", "settle_s", "shot", "_shot", "changed", "seen",
         "found", "tier")
@@ -246,6 +250,10 @@ class BlindError(RuntimeError):
     """The screen feed is gone; acting now would be guessing."""
 
 
+class SecretError(RuntimeError):
+    """A secret could not go in safely: the task ends here. Trying again could enter a wrong payment password."""
+
+
 class Agent:
     def __init__(self, phone: Phone, screen: Screen, actor: LLM, planner: LLM, trace: Trace,
                  max_steps: int = 100, max_failures: int = 3,  # max_steps 0: until done, fail or stop
@@ -279,6 +287,9 @@ class Agent:
             raise RuntimeError("agent already running")
         self.vault.load(task)
         task = self.vault.redact(task)  # a password typed into the task: from here on only its {NAME}
+        if refused := self.vault.over_limit(task):
+            log.info("agent: refused a task over a secret's cap: %s", refused)
+            raise RuntimeError(refused)
         quick, rest = shortcuts.split(task)
         if rest and not self.screen.live:  # keyboard shortcuts alone work blind; the models need to see
             raise RuntimeError("no phone screen: start Screen Mirroring first")
@@ -344,6 +355,9 @@ class Agent:
                     failures = 0
                 except BlindError:
                     raise
+                except SecretError as e:
+                    self._record(action="fail", reason=str(e))
+                    return
                 except Exception as e:  # a bad reply or a dropped link: recover, don't crash
                     self._record(action="hiccup", reason=str(e)[:300])
                     board_drop = isinstance(e, DeviceError) and await self.phone.device.wait_connected(15)
@@ -723,7 +737,8 @@ class Agent:
         return "Secrets in the goal: " + ", ".join(f"{{{n}}} ({state(n)})" for n in wanted) + "\n\n"
 
     def _check_secrets(self, acts: list[dict]) -> list[dict]:
-        """The round up to its first action that cannot enter its secret, which becomes an ask: the user enters it.
+        """The round up to its first action that cannot enter its secret, which becomes an ask when the secret is
+        simply not stored (the user enters it) and a fail otherwise.
 
         Checked before any action of the round runs, so a keypad that cannot go in is not followed by its Pay tap.
         """
@@ -735,48 +750,113 @@ class Agent:
             for name in wanted:
                 if problem := self._secret_problem(name, entered, keypad):
                     meta = {k: v for k, v in a.items() if k in ("thought", "thought_zh", "page")}
-                    return [*acts[:i], {**meta, "action": "ask", "reason": problem}]
+                    # handed over only when nothing is stored: everything else is a stop nobody has to watch for
+                    final = "ask" if name in vault.names(self.task) and self.vault.get(name) is None else "fail"
+                    self._used(name, a["action"], "refused")
+                    return [*acts[:i], {**meta, "action": final, "reason": problem}]
                 entered.add(name)
         return acts
 
     def _secret_problem(self, name: str, entered: set[str], keypad: bool = False) -> str | None:
         """Why the secret `name` cannot be entered now, for the user; None when it can."""
         if name not in vault.names(self.task):  # a screen must not talk the actor into entering another secret
-            return f"The task names no {{{name}}}: enter that password on the phone yourself."
+            return f"The task names no {{{name}}}, so it was not entered: check the phone."
         if name in entered:
-            return (f"{{{name}}} was entered once and is asked for again: check it and enter it on the phone "
-                    "yourself (a wrong payment password entered again and again locks the account).")
+            return (f"{{{name}}} was entered once and is asked for again: stopped, since a wrong payment password "
+                    "entered again and again locks the account. Check the phone.")
         if (value := self.vault.get(name)) is None:
-            return (f"No stored secret {{{name}}}: enter it on the phone yourself, or set HIDAGENT_SECRET_{name} in "
-                    "server/.env, restart the server and run the task again.")
+            return (f"No stored secret {{{name}}}: enter it on the phone yourself, or store it (security "
+                    f"add-generic-password -s hidagent -a {name} -w, or HIDAGENT_SECRET_{name} in server/.env and a "
+                    "server restart) and run the task again.")
         if keypad and not value.isdigit():
-            return f"{{{name}}} is not all digits, so it cannot go in on this keypad: enter it on the phone yourself."
+            return f"{{{name}}} is not all digits, so it cannot go in on this keypad: check the phone."
         if not keypad and not value.isascii():
-            return (f"{{{name}}} has characters the hardware keyboard cannot type: enter it on the phone "
-                    "yourself.")
+            return f"{{{name}}} has characters the hardware keyboard cannot type: check the phone."
         return None
 
     async def _type_secret(self, text: str) -> None:
         """Type text whose {NAME}s are secrets, on the hardware keyboard only (nothing on the clipboard)."""
-        for name in vault.names(text):
+        wanted = vault.names(text)
+        for name in wanted:
             if problem := self._secret_problem(name, self._entered):
-                raise ValueError(problem)
+                raise SecretError(problem)
             self._entered.add(name)  # counted even if typing fails half-way: no second try on its own
             text = text.replace("{" + name + "}", self.vault.get(name))
         await self.phone.type_secret(text)
+        for name in wanted:
+            self._used(name, "secret", "typed")
+
+    def _used(self, name: str, action: str, outcome: str) -> None:
+        """One trace and log line per use of a secret: its name and what happened, never its value."""
+        self.trace.write(kind="secret", name=name, action=action, outcome=outcome)
+        log.info("agent: secret {%s} %s: %s", name, action, outcome)
 
     async def _keypad(self, a: dict) -> None:
-        """Press the secret's digits on an on-screen keypad; the model gave only where the keypad is."""
-        if problem := self._secret_problem(a["name"], self._entered, keypad=True):
-            raise ValueError(problem)
-        self._entered.add(a["name"])
-        spots = vault.keypad(self.vault.get(a["name"]), (a["x1"] / 1000, a["y1"] / 1000, a["x2"] / 1000,
-                                                          a["y2"] / 1000))
+        """Press the secret's digits on an on-screen keypad. The model gave only roughly where the keypad is: the
+        keys are found on the screen, each press must add one dot, and a miss clears the field for one more try."""
+        name = a["name"]
+        if problem := self._secret_problem(name, self._entered, keypad=True):
+            raise SecretError(problem)
+        digits = self.vault.get(name)
         with vault.hush():
-            for x, y in spots:
-                await self.phone.tap(x, y)
-            # off the keypad: left on the last key, the pointer would show the last digit in the next screenshot
-            await self.phone.point(*_pointer_path(a)[0])
+            box = (a["x1"] / 1000, a["y1"] / 1000, a["x2"] / 1000, a["y2"] / 1000)
+            await self.phone.point(*_park(box))  # the pointer off the keys, so it hides no glyph
+            await self.screen.settled(quiet=0.2, least=0.15, most=1.5)
+            if (grid := vision.keypad_grid(self.screen.frame, box)) is None:
+                self._used(name, "keypad", "no keypad there")
+                raise ValueError("no 3x4 digit keypad (1-9, blank, 0, delete) where keypad said: look again and "
+                                 "give the corners of the 1 key and of the delete key")
+            a.update(x1=round(grid[0] * 1000), y1=round(grid[1] * 1000), x2=round(grid[2] * 1000),
+                     y2=round(grid[3] * 1000))  # the record and the resting pointer use the keys as found
+            self._entered.add(name)
+            empty = None
+            for attempt in (1, 2):
+                await self._clear_keypad(grid, len(digits))  # dots typed before (or by a miss) would join the PIN
+                await self.screen.settled(quiet=0.2, least=0.15, most=1.5)
+                if empty is not None and vision.dots(empty, self.screen.frame, _dot_band(grid)):
+                    self._used(name, "keypad", "field did not clear")
+                    raise SecretError(f"{{{name}}}: the password field did not clear after a missed key, so nothing "
+                                      "more was entered. Check the payment on the phone.")
+                empty = empty or self.screen.frame
+                missed = await self._press_digits(digits, grid, empty)
+                await self.phone.point(*_park(grid))
+                if missed is None:
+                    self._used(name, "keypad", "entered" if attempt == 1 else "entered on the second try")
+                    return
+                self._used(name, "keypad", f"try {attempt}: {missed}")
+                await self.screen.settled(quiet=0.2, least=0.15, most=1.5)
+                now = self.screen.frame
+                if not vision.same_screen(empty, now, limit=SHEET_CHANGE) or \
+                        vision.dots(empty, now, _dot_band(grid)) >= len(digits):
+                    break  # the app took the digits (or left the sheet): deleting now could press something else
+            raise SecretError(f"{{{name}}} did not go in on the keypad ({missed}); stopped rather than try again, "
+                              "since wrong payment passwords lock the account. Check the payment on the phone.")
+
+    async def _clear_keypad(self, grid: tuple, presses: int) -> None:
+        """Press the delete key enough times to empty the field (deletes on an empty field do nothing)."""
+        x, y = vault.keypad_key(11, grid)
+        await self.phone.tap(x, y)
+        for _ in range(presses - 1):
+            await self.phone.tap(x, y, aim=False)  # the pointer is already on it
+
+    async def _press_digits(self, digits: str, grid: tuple, empty: bytes) -> str | None:
+        """Press each digit and wait for its dot; what went wrong, or None when every digit went in."""
+        band = _dot_band(grid)
+        for k, (x, y) in enumerate(vault.keypad(digits, grid), 1):
+            await self.phone.tap(x, y)
+            deadline, last = time.time() + DOT_WAIT, k == len(digits)
+            while True:
+                await self.screen.settled(quiet=0.15, least=0.1, most=1.0)
+                frame = self.screen.frame
+                if not vision.same_screen(empty, frame, limit=SHEET_CHANGE):
+                    # the app moved on: right after the last digit that is the payment going through
+                    return None if last else f"the screen changed after {k} of {len(digits)} digits"
+                count = vision.dots(empty, frame, band)
+                if count == k:
+                    break
+                if count > k or time.time() > deadline:
+                    return f"{count} dots after {k} of {len(digits)} digits"
+        return None
 
     async def _do(self, a: dict) -> None:
         p = lambda k: a[k] / 1000  # noqa: E731
@@ -811,6 +891,19 @@ def _line(step: dict, hidden: tuple, w: int, h: int) -> str:
 def _where(step: dict) -> str:
     """"on PAGE: " for a step that knows the page it ran on."""
     return f"on {step['page']}: " if step.get("page") else ""
+
+
+def _park(box: tuple) -> tuple[float, float]:
+    """Where the pointer waits during and after a keypad entry: above the keypad and above its row of dots, so
+    it hides no key, no dot, and shows no digit in the next screenshot."""
+    top, bottom = sorted((box[1], box[3]))
+    return (box[0] + box[2]) / 2, max(0.1, top - 3.5 * (bottom - top) / 4)
+
+
+def _dot_band(grid: tuple) -> tuple[float, float]:
+    """The screen heights where the password dots show: the strip just above the keypad."""
+    row = (grid[3] - grid[1]) / 4
+    return grid[1] - 2.5 * row, grid[1] - 0.1 * row
 
 
 def _trail(steps: list[dict], most: int = 40) -> str:
@@ -865,8 +958,8 @@ def _pointer_path(act: dict) -> list[tuple[float, float]]:
         case "path": return [f(*p) for p in act["points"]]
         case "circle": return [f(act["x"] + act["r"], act["y"])]
         case "back": return [(0.005, 0.45), (0.6, 0.45)]
-        case "keypad":  # where it rests after the digits: just above the keypad, the same whatever they were
-            return [((act["x1"] + act["x2"]) / 2000, max(0.02, min(act["y1"], act["y2"]) / 1000 - 0.05))]
+        case "keypad":  # where it rests after the digits: above the keypad and its dots, whatever the digits were
+            return [_park((act["x1"] / 1000, act["y1"] / 1000, act["x2"] / 1000, act["y2"] / 1000))]
         case _: return []
 
 

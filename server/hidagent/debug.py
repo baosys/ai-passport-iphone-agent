@@ -4,6 +4,8 @@ import json
 import time
 from pathlib import Path
 
+from .vault import hidden
+
 
 class Trace:
     def __init__(self, root: Path | None):
@@ -27,7 +29,7 @@ class Trace:
             return
         record = self.scrub(record)
         self._n += 1
-        if frame:
+        if frame and not hidden():  # no screenshot while a secret goes in: the pointer may rest on a digit
             record["frame"] = f"{self._n:03d}.jpg"
             (self.dir / record["frame"]).write_bytes(frame)
         with open(self.dir / "steps.jsonl", "a") as f:
