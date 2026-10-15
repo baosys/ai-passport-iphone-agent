@@ -49,6 +49,8 @@ SHORTCUT_BUTTON = int(os.environ.get("HIDAGENT_SHORTCUT_BUTTON", 3))
 SHORTCUT_FETCH = 4.0    # seconds for the Shortcut to start and fetch /clip
 SHORTCUT_COPY = 0.6     # seconds from the fetch until the Shortcut has copied the text
 SHORTCUT_RETRY = 600    # seconds without trying the Shortcut after it did not fetch
+WHEEL_SCREEN = 0.004    # screen heights the content moves per wheel unit (measured: 30 units, 12%)
+WHEEL_STEP = 10         # wheel units per report
 
 
 class Phone:
@@ -243,6 +245,20 @@ class Phone:
     async def scroll(self, x: float, y: float, lines: int) -> None:
         await self.point(x, y)
         await self.device.send(f"scroll {lines} 0")
+
+    async def wheel(self, x: float, y: float, dy: float) -> None:
+        """Scroll the content under (x, y) by about dy of the screen height (> 0: further down) with the wheel,
+        which presses nothing, unlike a swipe that may open a long-press menu. iOS moves the content about
+        WHEEL_SCREEN screens per wheel unit; small reports keep it from accelerating."""
+        units = round(abs(dy) / WHEEL_SCREEN)
+        if not units:
+            return
+        await self.point(x, y)
+        sign = 1 if dy > 0 else -1
+        while units > 0:
+            step = min(units, WHEEL_STEP)
+            await self.device.send(f"scroll {sign * step} 0")
+            units -= step
 
     async def type(self, text: str) -> None:
         """ASCII goes straight to the keyboard. Anything else (Chinese) is pasted exactly: from this computer's

@@ -66,6 +66,16 @@ def test_back_swipe_starts_pinned_on_the_left_edge(tmp_path):
     assert device.sent[-1] == "release"
 
 
+def test_the_wheel_scrolls_in_small_reports_without_pressing(tmp_path):
+    phone, device = make_phone(tmp_path)
+    asyncio.run(phone.wheel(0.5, 0.5, 0.1))  # a tenth of the screen: 25 units
+    assert "press" not in device.sent
+    assert [line for line in device.sent if line.startswith("scroll")] == ["scroll 10 0", "scroll 10 0", "scroll 5 0"]
+    device.sent.clear()
+    asyncio.run(phone.wheel(0.5, 0.5, -0.04))
+    assert [line for line in device.sent if line.startswith("scroll")] == ["scroll -10 0"]
+
+
 def test_release_follows_press_even_when_the_swipe_fails(tmp_path):
     phone, device = make_phone(tmp_path)
 

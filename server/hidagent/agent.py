@@ -85,6 +85,9 @@ If you are unsure what an element does, tap it alone (one DO line) and check the
 Actions:
   tap X Y
   swipe X1 Y1 X2 Y2         (finger moves from X1,Y1 to X2,Y2: "swipe down" means Y2 > Y1)
+  scroll X Y D              (mouse wheel with the pointer on the content at X,Y: D > 0 reads further down,
+                             D < 0 goes back up; the content moves about D pixels. It never presses, so it is
+                             the way to read long pages, lists and chats where a swipe could open a long-press menu)
   path X1 Y1 X2 Y2 X3 Y3 …  (one continuous stroke through 2-20 points, for drawing)
   circle X Y R              (draw a circle centered at X Y; R is the radius in pixels)
   type TEXT                 (any text, Chinese too, into the focused field; if no field is focused, tap it first)
@@ -112,7 +115,8 @@ REMEMBERED = ("cue", "look", "page")  # what a routine keeps about a step beside
 
 # action name -> argument names; numeric arguments are screen coordinates: 0-1000 inside the agent, screenshot
 # pixels when talking to the actor (most vision models answer in pixels whatever the prompt asks for)
-ACTIONS = {"tap": ("x", "y"), "swipe": ("x1", "y1", "x2", "y2"), "circle": ("x", "y", "r"), "path": ("points",),
+ACTIONS = {"tap": ("x", "y"), "swipe": ("x1", "y1", "x2", "y2"), "scroll": ("x", "y", "dy"), "circle": ("x", "y", "r"),
+           "path": ("points",),
            "type": ("text",), "key": ("combo",), "open": ("app",), "note": ("text",), "done": ("answer",),
            "fail": ("reason",),
            "home": (), "back": (), "wait": (), "replan": ()}
@@ -191,9 +195,9 @@ def parse_plan(text: str) -> tuple[str, str]:
 def scale(act: dict, sx: float, sy: float) -> dict:
     """The action with its x coordinates (and circle radius) times sx and its y coordinates times sy."""
     out = dict(act)
-    for k in ("x", "x1", "x2", "r", "y", "y1", "y2"):
+    for k in ("x", "x1", "x2", "r", "y", "y1", "y2", "dy"):
         if k in out:
-            out[k] = round(out[k] * (sy if k.startswith("y") else sx))
+            out[k] = round(out[k] * (sx if k.startswith(("x", "r")) else sy))
     if "points" in out:
         out["points"] = [[round(x * sx), round(y * sy)] for x, y in out["points"]]
     return out
@@ -646,6 +650,7 @@ class Agent:
         match a["action"]:
             case "tap": await self.phone.tap(p("x"), p("y"))  # always aimed: the pointer is checked before pressing
             case "swipe": await self.phone.swipe(p("x1"), p("y1"), p("x2"), p("y2"))
+            case "scroll": await self.phone.wheel(p("x"), p("y"), p("dy"))
             case "path": await self.phone.drag([(x / 1000, y / 1000) for x, y in a["points"]])
             case "circle": await self.phone.drag(circle(p("x"), p("y"), p("r"), self.screen.aspect))
             case "type": await self.phone.type(a["text"])
@@ -665,7 +670,7 @@ def _page(step: dict) -> dict:
 def _moved(act: dict, dx: int, dy: int) -> dict:
     """The pointer action shifted by (dx, dy) in 0-1000 screen units."""
     act = dict(act)
-    if act["action"] in ("tap", "circle"):
+    if act["action"] in ("tap", "circle", "scroll"):
         act["x"], act["y"] = act["x"] + dx, act["y"] + dy
     elif act["action"] == "swipe":
         act.update(x1=act["x1"] + dx, y1=act["y1"] + dy, x2=act["x2"] + dx, y2=act["y2"] + dy)
@@ -678,7 +683,7 @@ def _pointer_path(act: dict) -> list[tuple[float, float]]:
     """Screen points (fractions) the pointer passes through for one action."""
     f = lambda x, y: (x / 1000, y / 1000)  # noqa: E731
     match act["action"]:
-        case "tap": return [f(act["x"], act["y"])]
+        case "tap" | "scroll": return [f(act["x"], act["y"])]
         case "swipe": return [f(act["x1"], act["y1"]), f(act["x2"], act["y2"])]
         case "path": return [f(*p) for p in act["points"]]
         case "circle": return [f(act["x"] + act["r"], act["y"])]

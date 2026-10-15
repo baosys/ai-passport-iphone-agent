@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from hidagent.agent import KEY_NAMES, circle, parse_actions, parse_command, parse_plan
+from hidagent.agent import KEY_NAMES, circle, parse_actions, parse_command, parse_plan, scale
 
 
 def test_parse_single_action():
@@ -27,6 +27,12 @@ def test_parse_caps_at_six_actions():
 def test_parse_path_and_circle():
     assert parse_command("path 100 200 300 400 500 600")["points"] == [[100, 200], [300, 400], [500, 600]]
     assert parse_command("circle 500 450 200") == {"action": "circle", "x": 500, "y": 450, "r": 200}
+
+
+def test_scroll_distance_is_scaled_like_a_height():
+    act = parse_command("scroll 200 600 -300")
+    assert act == {"action": "scroll", "x": 200, "y": 600, "dy": -300}
+    assert scale(act, 2, 0.5) == {"action": "scroll", "x": 400, "y": 300, "dy": -150}
 
 
 @pytest.mark.parametrize("line", ["fly 1 2", "tap 500", "path 1 2 3"])
