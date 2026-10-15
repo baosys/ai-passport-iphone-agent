@@ -164,11 +164,27 @@ def test_ascii_text_is_typed_directly(tmp_path):
     assert device.sent == ["type hello"]
 
 
-def test_chinese_is_typed_as_pinyin_without_a_clipboard(tmp_path, monkeypatch):
+def test_a_short_word_is_typed_as_pinyin_without_a_clipboard(tmp_path, monkeypatch):
     monkeypatch.setenv("HIDAGENT_PASTE", "0")
     phone, device = make_phone(tmp_path)
     asyncio.run(phone.type("你好，世界"))
     assert device.sent == ["type nihao", "key space", "type ,", "type shijie", "key space"]
+
+
+def test_longer_chinese_is_never_typed_as_pinyin(tmp_path, monkeypatch):
+    monkeypatch.setenv("HIDAGENT_PASTE", "0")
+    phone, device = make_phone(tmp_path)
+    with pytest.raises(phone_module.PasteError):
+        asyncio.run(phone.type("汇丰信用卡还款建议"))
+    assert device.sent == []
+
+
+def test_the_relay_does_not_paste_into_another_app(tmp_path, monkeypatch):
+    phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([True]))
+    monkeypatch.setattr(vision, "same_screen", lambda a, b: False)  # typing started in Safari itself
+    with pytest.raises(phone_module.PasteError):
+        asyncio.run(phone.type("HSBC Pulse信用卡如何还款"))
+    assert "key cmd+v" not in device.sent
 
 
 def test_chinese_is_pasted_when_the_clipboard_works(tmp_path, monkeypatch):
@@ -260,6 +276,7 @@ def relay_phone(tmp_path, monkeypatch, pasted):
     monkeypatch.setenv("HIDAGENT_PASTE", "0")
     monkeypatch.setattr(phone_module, "SHORTCUT_FETCH", 0)
     monkeypatch.setattr(vision, "changed", lambda *a, **k: next(pasted))
+    monkeypatch.setattr(vision, "same_screen", lambda a, b: True)
     phone, device = make_phone(tmp_path)
     phone.screen, phone.relay = FakeScreen(), FakeRelay()
     calls = []

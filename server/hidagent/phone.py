@@ -42,6 +42,7 @@ SEARCH_ANIMATION = 0.5  # seconds for search to open or close when there is no m
 PASTE_SPOTS = 60        # changed pixels that count as pasted text; a blinking cursor alone stays below
 PASTE_RETRY = 600       # seconds without trying to paste after a paste changed nothing (no Universal Clipboard)
 PRESS_SETTLE = 0.08     # seconds between pressing and moving, so iOS sees a touch before it moves, not a tap
+PINYIN_MOST = 6         # Chinese characters that may still be typed as pinyin when pasting failed (a short word)
 RELAY_LOAD = 8.0        # seconds for Safari to load the relay page
 RELAY_COPY = 3.0        # seconds for the page to report its copy after the tap
 # mouse button AssistiveTouch maps to the paste Shortcut; 0 turns the Shortcut off
@@ -66,6 +67,10 @@ def wheel_steps(units: int) -> list[int]:
     top = len(ramp) + 1
     full, rest = divmod(left, top)
     return sorted(ramp + ([rest] if rest else [])) + [top] * full + ramp[::-1]
+
+
+class PasteError(RuntimeError):
+    """Text could not be put on the phone exactly; nothing was typed."""
 
 
 class Phone:
@@ -289,12 +294,15 @@ class Phone:
     async def type(self, text: str) -> None:
         """ASCII goes straight to the keyboard. Anything else (Chinese) is pasted exactly: from this computer's
         clipboard (Universal Clipboard), else copied by the phone's paste Shortcut or in Safari from a page this
-        server offers (relay.py). Pinyin, which may pick wrong homophones, is the last resort."""
+        server offers (relay.py). Pinyin picks wrong homophones, so only a short word may fall back to it; longer
+        text that could not be pasted raises PasteError rather than going out wrong."""
         if text.isascii():
             await self.device.send(f"type {text}")
             return
         if await self._paste(text) or await self._shortcut(text) or await self._relay(text):
             return
+        if sum(not c.isascii() for c in text) > PINYIN_MOST:
+            raise PasteError("the text could not be pasted exactly, and nothing was typed: try the type action again")
         await self._pinyin(text)
 
     async def _pinyin(self, text: str) -> None:
@@ -365,7 +373,7 @@ class Phone:
         url = self.relay.offer(text)
         if url is None:
             return False
-        field = self.last_tap
+        field, start = self.last_tap, self.screen.frame
         await self.open_app("Safari")
         await self.screen.settled(quiet=0.3, least=1.0, most=4.0)  # cmd+l is lost while Safari is still opening
         copied = False
@@ -398,6 +406,9 @@ class Phone:
         if field is not None:  # the field may lose its focus on the way: tap it again
             await self.tap(*field)
         if not copied:
+            return False
+        if not vision.same_screen(start, self.screen.frame):  # e.g. it was typing in Safari itself
+            log.info("relay: came back to another screen than the one typing started on; not pasting there")
             return False
         for _ in range(2):
             before = self.screen.frame

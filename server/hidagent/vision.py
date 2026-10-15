@@ -37,6 +37,18 @@ def changed(before: bytes | None, after: bytes | None, ignore: tuple = (), thres
     return hits >= spots
 
 
+def same_screen(a: bytes | None, b: bytes | None, limit: float = 8.0) -> bool:
+    """True when two frames show the same screen of the same app: only small things differ (a typed word, the
+    cursor). Measured: back in the same chat after a trip to Safari 0.2-2.4, another app 25-120."""
+    if not a or not b:
+        return True
+    x, y = _gray(a), _gray(b)
+    if x.size != y.size:
+        return False
+    small = ImageChops.difference(x.resize((32, 64), Image.BILINEAR), y.resize((32, 64), Image.BILINEAR)).tobytes()
+    return sum(small) / len(small) <= limit
+
+
 def pointer(before: bytes, after: bytes, near: tuple[float, float], shift: float,
             reach: tuple[float, float] = (0.12, 0.08)) -> tuple[float, float] | None:
     """Where the pointer is in `before`, given it moved right by `shift` (fraction of width) in `after`.
