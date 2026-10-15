@@ -26,6 +26,7 @@ STEP = 1.0           # seconds for Control Center or the receiver list to open w
 CONNECT_WAIT = 10    # seconds for mirroring to come up after tapping the receiver
 POKE = 5             # seconds between pointer nudges while the phone mirrors but no frame has come yet
 STALL = 30           # seconds of mirroring with no frame despite nudges before the receiver is restarted
+FROZEN = 20          # seconds of board commands after the last frame before the video counts as stopped
 CLOSE = (0.5, 0.05)  # top center: empty in Control Center and outside the receiver list; the status bar elsewhere
 
 FIND_PROMPT = """You find one element on an iPhone screenshot (iOS Control Center, Chinese or English UI).
@@ -203,6 +204,11 @@ class Mirror:
                     self.state = "idle"
                 if self.screen.live:
                     stalled = None
+                    if self.phone.device.last - self.screen.updated > FROZEN:
+                        # seen once: the phone kept its control link to UxPlay but closed the video link, and the
+                        # agent tapped a frozen frame for minutes
+                        log.warning("mirror: commands for %ds and no new frame; restarting the receiver", FROZEN)
+                        self.screen.restart()
                     continue
                 if time.time() - poked > POKE:
                     poked = time.time()

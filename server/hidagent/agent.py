@@ -102,6 +102,8 @@ finding its icon.
 DO: open App Store"""
 
 # not part of the action
+BLIND_WAIT = 60  # seconds a task waits for a lost mirror to come back before it gives up
+
 META = ("t", "thought", "thought_zh", "page", "think_s", "act_s", "settle_s", "shot", "_shot", "changed", "seen",
         "found", "tier")
 REMEMBERED = ("cue", "look", "page")  # what a routine keeps about a step besides the action
@@ -217,6 +219,7 @@ class Agent:
         self.shots: dict[int, bytes] = {}  # step index -> screenshot the model decided on
         self._pointer = (0.0, 0.0)  # last pointer position (screen fractions)
         self._job: asyncio.Task | None = None
+        self.blind = False  # waiting for the mirror: the phone is free for the mirror watcher to reconnect it
         self._quick: list[dict] = []  # leading actions of the task that need no model (see shortcuts.py)
         self._replayed: list[dict] = []  # actions replayed from a remembered routine (see routines.py)
         self._rest = ""  # the part of the task the shortcuts leave to the models
@@ -259,8 +262,17 @@ class Agent:
 
     async def _ask(self, role: str, llm: LLM, system: str, prompt: str, temperature: float = 0,
                    max_tokens: int = 600) -> tuple[str, float, bytes | None]:
-        if not self.screen.live:  # never let the model act blind
-            raise BlindError("lost the phone screen: reconnect Screen Mirroring")
+        if not self.screen.live:  # never let the model act blind: wait for the mirror watcher to bring it back
+            self.blind, deadline = True, time.time() + BLIND_WAIT
+            try:
+                while not self.screen.live and time.time() < deadline:
+                    await asyncio.sleep(0.5)
+            finally:
+                self.blind = False
+            if not self.screen.live:
+                raise BlindError("lost the phone screen: reconnect Screen Mirroring")
+            self._record(action="hiccup", reason="the mirror dropped and came back")
+            await self.screen.settled()
         frame, started = self.screen.frame, time.time()
         reply = await llm.chat(system, prompt, frame, max_tokens=max_tokens, temperature=temperature)
         seconds = round(time.time() - started, 2)

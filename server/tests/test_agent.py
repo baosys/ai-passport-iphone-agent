@@ -272,3 +272,42 @@ def test_shortcut_task_runs_without_any_model_and_without_a_screen():
     agent = asyncio.run(run())
     assert Phone.opened == ["weixin"]
     assert [s["action"] for s in agent.steps] == ["open", "done"]
+
+
+def test_a_task_waits_for_a_dropped_mirror_and_lets_it_reconnect(monkeypatch):
+    import asyncio
+
+    import hidagent.agent as agent_module
+    from hidagent.agent import Agent, BlindError
+    from hidagent.debug import Trace
+
+    class Screen:
+        live, frame = False, b"jpeg"
+        async def settled(self, **wait):
+            pass
+
+    class Actor:
+        model = "fake"
+        async def chat(self, system, text, image=None, max_tokens=600, temperature=0):
+            return "ok"
+
+    screen = Screen()
+    agent = Agent(phone=None, screen=screen, actor=Actor(), planner=None, trace=Trace(None))
+    seen = []
+
+    async def mirror_comes_back():
+        await asyncio.sleep(0.1)
+        seen.append(agent.blind)  # the mirror watcher may tap now
+        screen.live = True
+
+    async def go():
+        back = asyncio.create_task(mirror_comes_back())
+        reply = await agent._ask("actor", agent.actor, "", "")
+        await back
+        return reply
+
+    assert asyncio.run(go())[0] == "ok" and seen == [True] and not agent.blind
+    screen.live = False
+    monkeypatch.setattr(agent_module, "BLIND_WAIT", 0.1)
+    with pytest.raises(BlindError):
+        asyncio.run(agent._ask("actor", agent.actor, "", ""))

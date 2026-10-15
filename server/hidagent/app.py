@@ -34,7 +34,8 @@ agent = Agent(phone, screen, LLM.from_env("ACTOR"), LLM.from_env("PLANNER"),
               Trace(DATA_DIR / "traces" if DEBUG else None),
               max_steps=int(os.environ.get("HIDAGENT_MAX_STEPS", 100)), routines=Routines(DATA_DIR / "routines.json"),
               jev=Jev.from_env())
-mirror = Mirror(phone, screen, agent.actor, DATA_DIR / "mirror.json", AIRPLAY_NAME, busy=lambda: agent.running)
+mirror = Mirror(phone, screen, agent.actor, DATA_DIR / "mirror.json", AIRPLAY_NAME,
+                busy=lambda: agent.running and not agent.blind)  # a task waiting for the mirror lets it reconnect
 
 
 @asynccontextmanager

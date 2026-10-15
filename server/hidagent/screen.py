@@ -92,6 +92,7 @@ class Screen:
         """Stop the receiver; the supervisor starts a fresh one (the phone then has to connect again)."""
         if not self._running():
             return
+        self.frame = None  # the last frame is old news: nothing to look at until the new receiver sends one
         if self._proc is not None:
             self._proc.terminate()
         else:

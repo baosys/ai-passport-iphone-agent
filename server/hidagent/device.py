@@ -21,6 +21,11 @@ class Device:
         self.links = 0  # bumped on every (re)connect, so gestures know to release and re-home
 
     @property
+    def last(self) -> float:
+        """When the last command other than a ping was sent: every one moves the pointer or changes the screen."""
+        return self._last
+
+    @property
     def connected(self) -> bool:
         return self._writer is not None and not self._writer.is_closing()
 

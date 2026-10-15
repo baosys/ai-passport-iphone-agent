@@ -16,7 +16,7 @@ FRAME = b"\xff\xd8\xff\xc0\x00\x11\x08" + (650).to_bytes(2, "big") + (300).to_by
 class FakeDevice:
     """Records the protocol lines; `on_click` lets a test react to taps (mirroring coming back)."""
 
-    links, connected = 1, True
+    links, connected, last = 1, True, 0.0
 
     def __init__(self):
         self.sent = []
@@ -172,6 +172,17 @@ def test_watch_restarts_a_receiver_that_sends_no_video(tmp_path, monkeypatch):
     screen.frame = None  # connected, nudged, and still nothing
     run_watch(mirror, lambda: screen.restarts > 0)
     assert screen.restarts == 1 and "move 1 0" in device.sent
+
+
+def test_watch_restarts_a_receiver_whose_video_froze(tmp_path, monkeypatch):
+    monkeypatch.setattr(mirror_module, "FROZEN", 20)
+    mirror, device, screen = make(tmp_path, live=True, busy=lambda: True)  # even during a task: no taps needed
+    screen.updated, device.last = 100.0, 119.0  # commands kept coming after the last frame, not long enough yet
+    run_watch(mirror, lambda: False, timeout=0.1)
+    assert screen.restarts == 0
+    device.last = 121.0
+    run_watch(mirror, lambda: screen.restarts > 0)
+    assert screen.restarts == 1 and device.sent == []
 
 
 def test_no_restart_without_a_nudge(tmp_path, monkeypatch):
