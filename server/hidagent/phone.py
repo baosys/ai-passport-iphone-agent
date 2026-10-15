@@ -368,13 +368,20 @@ class Phone:
         field = self.last_tap
         await self.open_app("Safari")
         await self.screen.settled(quiet=0.3, least=1.0, most=4.0)  # cmd+l is lost while Safari is still opening
-        await self.device.send("key cmd+l")
-        await self._still()
-        await self.device.send(f"type {url}")  # digits and signs: the pinyin keyboard leaves them in the address bar
-        await self.device.send("key enter")
         copied = False
         try:
-            await asyncio.wait_for(self.relay.loaded.wait(), RELAY_LOAD)
+            for attempt in range(2):  # Safari still busy with an old page can drop the first address
+                await self.device.send("key cmd+l")
+                await self._still()
+                await self.device.send(f"type {url}")  # digits and signs: pinyin leaves them in the address bar
+                await self.device.send("key enter")
+                try:
+                    await asyncio.wait_for(self.relay.loaded.wait(), RELAY_LOAD)
+                    break
+                except asyncio.TimeoutError:
+                    if attempt:
+                        raise
+                    log.info("relay: Safari did not load %s, typing it again", url)
             await asyncio.sleep(0.5)  # until the page is drawn
             for _ in range(2):  # the whole page is the copy button: no need to aim
                 await self.tap(0.5, 0.45, aim=False)

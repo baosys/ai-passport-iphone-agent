@@ -292,6 +292,26 @@ def test_the_field_is_tapped_again_after_the_round_trip(tmp_path, monkeypatch):
     assert calls[-1] == "tap 0.4 0.1" and device.sent[-2:] == ["key cmd+v", "key cmd+v"]
 
 
+def test_an_address_safari_dropped_is_typed_again(tmp_path, monkeypatch):
+    phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([True]))
+    monkeypatch.setattr(phone_module, "RELAY_LOAD", 0.01)
+    offer = phone.relay.offer
+
+    def slow_offer(text):
+        url = offer(text)
+        phone.relay.loaded.clear()  # the first try never loads
+        return url
+
+    async def send(line):
+        device.sent.append(line)
+        if device.sent.count("key enter") == 2:
+            phone.relay.loaded.set()
+
+    phone.relay.offer, device.send = slow_offer, send
+    asyncio.run(phone.type("你好"))
+    assert device.sent.count("type 10.0.0.2:8890/123456") == 2 and device.sent[-1] == "key cmd+v"
+
+
 def test_the_paste_shortcut_copies_without_leaving_the_app(tmp_path, monkeypatch):
     phone, device, calls = relay_phone(tmp_path, monkeypatch, iter([True]))
     phone.relay.shortcut = True
