@@ -368,7 +368,12 @@ class Phone:
                 await self.device.send(line)
         if name.isascii():
             await self.device.send("key space")
-        await self._still()
+        if self.screen is not None and self.screen.live:
+            # results stream in and re-rank for a second or two: an enter 1.2 s after the name once opened the
+            # app's page in Settings, which had briefly been the top hit, instead of the app
+            await self.screen.settled(quiet=0.4, least=0.3, most=2.5)
+        else:
+            await asyncio.sleep(SEARCH_ANIMATION)
         await self.device.send("key enter")
 
     async def _still(self) -> None:
