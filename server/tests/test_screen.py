@@ -104,3 +104,20 @@ def test_the_relay_address_is_the_local_end_of_the_mirroring_connection(monkeypa
     ipv4 = Ran("p1\nn192.168.1.4:7000->192.168.1.9:5000\n")
     monkeypatch.setattr(screen_module.subprocess, "run", lambda *a, **k: ipv4)
     assert screen.local_ip() == "192.168.1.4"
+
+
+def test_a_routable_ipv6_mirror_takes_the_ipv4_address_of_its_interface(monkeypatch):
+    ifconfig = ("lo0: flags=8049<UP>\n\tinet 127.0.0.1 netmask 0xff000000\n"
+                "en0: flags=8963<UP>\n\tinet6 fdec:5623:deb5:8900:8d3:d086:8f08:5f9a prefixlen 64\n"
+                "\tinet 192.168.88.18 netmask 0xffffff00\n"
+                "utun5: flags=8051<UP>\n\tinet 198.18.0.1 --> 198.18.0.1 netmask 0xfffe0000\n")
+
+    def run(args, **_):
+        if args[0] == "ifconfig":
+            return Ran(ifconfig)
+        return Ran("p1\nn[fdec:5623:deb5:8900:8d3:d086:8f08:5f9a]:55049->[fdec:5623:deb5:8900:18a1::ca19]:64696\n")
+
+    monkeypatch.setattr(screen_module.subprocess, "run", run)
+    screen = Screen()
+    screen.pid = 1
+    assert screen.local_ip() == "192.168.88.18"

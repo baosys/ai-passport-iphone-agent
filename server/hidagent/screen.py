@@ -5,9 +5,11 @@ the phone keeps mirroring; the next server start finds it again through a small 
 """
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -60,6 +62,32 @@ def _free_port() -> int:
 def _remote(peer: str) -> bool:
     """True for a connection to another machine (the phone), not to this one."""
     return not (peer.startswith("127.") or peer.startswith("[::1]") or peer.startswith("[::ffff:127."))
+
+
+def _ipv4_beside(ipv6: str) -> str | None:
+    """The IPv4 address of the interface that has `ipv6`. Link-local as lsof writes it on macOS,
+    fe80:<interface index in hex>::..., names the interface; any other address is looked up in ifconfig."""
+    try:
+        if ipv6.startswith("fe80:"):
+            name = socket.if_indextoname(int(ipv6.split(":")[1], 16))
+            out = subprocess.run(["ifconfig", name], capture_output=True, text=True, timeout=2).stdout
+        else:
+            out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=2).stdout
+            want = ipaddress.ip_address(ipv6)
+            out = next((block for block in re.split(r"\n(?=\S)", out)
+                        if any(_same(word.split()[0], want) for word in block.split("inet6 ")[1:])), "")
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return None
+    for word in out.split("inet ")[1:]:
+        return word.split()[0]
+    return None
+
+
+def _same(text: str, want) -> bool:
+    try:
+        return ipaddress.ip_address(text.partition("%")[0]) == want
+    except ValueError:
+        return False
 
 
 class Screen:
@@ -246,16 +274,10 @@ class Screen:
             host = local.rpartition(":")[0]
             if not host.startswith("["):
                 return host
-            # IPv6 link-local, as lsof writes it on macOS: [fe80:<interface index in hex>::...]. A URL typed in
-            # Safari cannot carry the zone, so take the IPv4 address of the same interface.
-            zone = host[1:].split(":")[1] if host.startswith("[fe80:") else ""
-            try:
-                name = socket.if_indextoname(int(zone, 16))
-                out = subprocess.run(["ifconfig", name], capture_output=True, text=True, timeout=2).stdout
-            except (ValueError, OSError, subprocess.SubprocessError):
-                continue
-            for word in out.split("inet ")[1:]:
-                return word.split()[0]
+            # IPv6: a URL typed in Safari cannot carry a zone, and its hex letters would go through the pinyin
+            # keyboard, so take the IPv4 address of the same interface
+            if ip := _ipv4_beside(host[1:-1]):
+                return ip
         return None
 
     @property
