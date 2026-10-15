@@ -28,7 +28,8 @@ The phone has a hardware keyboard, and keys are much faster than taps: plan with
 To open an app, write "Open <app name>": the agent opens apps through search in one step, never by paging
 through home screens. Going to the home screen is one fast step too.
 When the goal reads information in one app and sends it in another (e.g. look up the weather, then message it to
-someone), plan the reading first, with a step to note what was read, then the sending."""
+someone), plan the reading first, with a step to note what was read, then the sending. One good source is
+enough for a summary: plan to read it once, not to compare many."""
 
 ACTOR_PROMPT = """You operate an iPhone through a mouse pointer and a hardware keyboard. You see the current screen.
 Reply in this format, nothing else:
@@ -62,6 +63,9 @@ The agent only remembers recent actions, not earlier screens. When the goal need
 (e.g. read the weather, then message it to someone), keep it with note TEXT before you leave the screen: notes stay
 with you for the whole task. Write the facts themselves (dates, numbers, names, steps), in the language the message
 will use, not a description of the screen.
+Collecting information to pass on: a few facts are enough (the main steps, numbers and warnings). Once your
+notes answer the goal, stop reading and go on to the sending; never scroll back over or reread what you already
+noted, and do not hunt for more sources.
 The on-screen keyboard never appears, so its keys (Send, Search, Go, Done) are missing: press them with
 key enter. To send a chat message (WeChat, Messages, ...), type it and then key enter; do not look for a send button.
 Type the whole message in ONE type action on one line (separate points with ；or ; — a line break would send it
